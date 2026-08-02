@@ -97,6 +97,18 @@
     border-color: var(--unread);
 }
 
+.icon-btn--active {
+    background: var(--pri);
+    border-color: var(--pri);
+    color: var(--on-brand);
+}
+
+.icon-btn--active:hover {
+    background: var(--prih);
+    border-color: var(--prih);
+    color: var(--on-brand);
+}
+
 .connect {
     padding: 12px 14px 8px;
     display: flex;

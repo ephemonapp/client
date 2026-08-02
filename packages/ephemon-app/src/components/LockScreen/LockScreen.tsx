@@ -20,7 +20,7 @@ const SOURCE_URL = 'https://github.com/ephemonapp/client';
 const PROTOCOL_URL = `${process.env.EPHEMON_CLIENT_URL}/docs/protocol.svg?_=${process.env.EPHEMON_BUILD_TIMESTAMP}`;
 
 const LockScreen: React.FC<LockScreenProps> = ({ passwordState, onSubmit, onReset }) => {
-    const { theme, toggleTheme } = useTheme();
+    const { theme, preference, toggleTheme } = useTheme();
     const [privacyOpen, setPrivacyOpen] = useState(false);
     const [configured, setConfigured] = useState(isConfigured);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -49,7 +49,7 @@ const LockScreen: React.FC<LockScreenProps> = ({ passwordState, onSubmit, onRese
                     keeps its place and the gear turns into the close button on the spot. */}
                 <div className='lock__actions'>
                     <button
-                        className='lock__action'
+                        className={`lock__action${preference === 'system' ? '' : ' lock__action--active'}`}
                         title='Theme'
                         onClick={toggleTheme}
                     >

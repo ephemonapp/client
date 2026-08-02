@@ -127,6 +127,18 @@
     border-color: var(--pri-text);
 }
 
+.lock__action--active {
+    background: var(--pri);
+    border-color: var(--pri);
+    color: var(--on-brand);
+}
+
+.lock__action--active:hover {
+    background: var(--prih);
+    border-color: var(--prih);
+    color: var(--on-brand);
+}
+
 .lock-skel__action.skeleton {
     width: 34px;
     height: 34px;

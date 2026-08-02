@@ -126,6 +126,7 @@ const Scene: React.FC = () => {
         <Sidebar
             isMobile={false}
             onShowMyQr={noop}
+            myQrOpen={false}
             onLock={noop}
             onConnect={noop}
             onScan={noop}

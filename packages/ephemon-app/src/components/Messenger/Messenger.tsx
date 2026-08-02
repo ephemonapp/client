@@ -36,7 +36,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 type ModalState =
     | null
-    | { kind: 'qr'; title: string; subtitle: string; keyText: string }
+    | { kind: 'qr'; own: boolean; title: string; subtitle: string; keyText: string }
     | { kind: 'scanner' }
     | { kind: 'privacy' }
     | { kind: 'rename'; id: number; current: string };
@@ -193,6 +193,7 @@ const Messenger: React.FC<MessengerProps> = ({
     const openMyQr = useCallback(() => {
         setModal({
             kind: 'qr',
+            own: true,
             title: `Your ${process.env.EPHEMON_APP_NAME} code`,
             subtitle: 'Others scan this to start a chat with you',
             keyText: publicKey ? contactCode(publicKey, getSettings().serverUrl) : '',
@@ -203,6 +204,7 @@ const Messenger: React.FC<MessengerProps> = ({
         const known = connectionsRef.current.available.find((candidate) => candidate.publicKey === peerKey);
         setModal({
             kind: 'qr',
+            own: false,
             title: `${displayName(name, peerKey)}'s code`,
             subtitle: 'Share this so others can add this contact',
             keyText: contactCode(peerKey, known?.serverUrl ?? getSettings().serverUrl),
@@ -242,6 +244,7 @@ const Messenger: React.FC<MessengerProps> = ({
                 <Sidebar
                     isMobile={isMobile}
                     onShowMyQr={openMyQr}
+                    myQrOpen={modal?.kind === 'qr' && modal.own}
                     onLock={onLock}
                     onConnect={doConnect}
                     onScan={onScan}

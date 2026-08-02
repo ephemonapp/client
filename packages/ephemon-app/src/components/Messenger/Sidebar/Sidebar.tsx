@@ -9,6 +9,7 @@ import React from 'react';
 type SidebarProps = {
     isMobile: boolean;
     onShowMyQr: () => void;
+    myQrOpen: boolean;
     onLock: () => void;
     onConnect: (code: string) => void;
     onScan: () => void;
@@ -23,6 +24,7 @@ type SidebarProps = {
 const Sidebar: React.FC<SidebarProps> = ({
     isMobile,
     onShowMyQr,
+    myQrOpen,
     onLock,
     onConnect,
     onScan,
@@ -37,6 +39,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div className={`sidebar${isMobile ? ' sidebar--mobile' : ''}`}>
             <BrandHeader
                 onShowMyQr={onShowMyQr}
+                myQrOpen={myQrOpen}
                 onLock={onLock}
             />
             <ConnectBlock

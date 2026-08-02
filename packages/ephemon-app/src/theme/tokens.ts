@@ -1,5 +1,7 @@
 export type ThemeName = 'light' | 'dark';
 
+export type ThemePreference = ThemeName | 'system';
+
 export type ThemeTokens = {
     '--surface': string;
     '--side': string;
@@ -94,6 +96,19 @@ export function themeTokens(theme: ThemeName): ThemeTokens {
 export const THEME_STORAGE_KEY = 'ephemon_theme';
 
 export const THEME_ATTRIBUTE = 'data-theme';
+
+const THEME_PREFERENCES: readonly ThemePreference[] = ['light', 'dark', 'system'];
+
+export function parseThemePreference(stored: string | null): ThemePreference {
+    return THEME_PREFERENCES.find((preference) => preference === stored) ?? 'system';
+}
+
+export function nextThemePreference(preference: ThemePreference, systemTheme: ThemeName): ThemePreference {
+    if (preference === 'system') {
+        return systemTheme === 'dark' ? 'light' : 'dark';
+    }
+    return preference === systemTheme ? 'system' : systemTheme;
+}
 
 function declarations(tokens: ThemeTokens): string {
     return Object.entries(tokens)

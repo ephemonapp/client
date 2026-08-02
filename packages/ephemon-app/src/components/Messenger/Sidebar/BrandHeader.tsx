@@ -6,11 +6,12 @@ import React from 'react';
 
 type BrandHeaderProps = {
     onShowMyQr: () => void;
+    myQrOpen: boolean;
     onLock: () => void;
 };
 
-const BrandHeader: React.FC<BrandHeaderProps> = ({ onShowMyQr, onLock }) => {
-    const { theme, toggleTheme } = useTheme();
+const BrandHeader: React.FC<BrandHeaderProps> = ({ onShowMyQr, myQrOpen, onLock }) => {
+    const { theme, preference, toggleTheme } = useTheme();
 
     return (
         <div className='brand'>
@@ -25,14 +26,14 @@ const BrandHeader: React.FC<BrandHeaderProps> = ({ onShowMyQr, onLock }) => {
                 <BrandNetStatus />
             </div>
             <button
-                className='icon-btn'
+                className={`icon-btn${myQrOpen ? ' icon-btn--active' : ''}`}
                 title='Show my QR / copy code'
                 onClick={onShowMyQr}
             >
                 <QrIcon />
             </button>
             <button
-                className='icon-btn'
+                className={`icon-btn${preference === 'system' ? '' : ' icon-btn--active'}`}
                 title='Theme'
                 onClick={toggleTheme}
             >
