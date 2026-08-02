@@ -1,0 +1,698 @@
+/* The panel owns the whole column: header and footer pinned, content scrolling between them.
+   Same structure on mobile, where the column becomes the full screen. */
+.lock__form.lock__form--settings {
+    position: relative;
+    justify-content: flex-start;
+    padding: 0;
+    overflow: hidden;
+}
+
+.cfg {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    animation: fade 0.2s ease;
+}
+
+.cfg__head {
+    flex: none;
+    padding: 42px 38px 14px;
+}
+
+.cfg__title {
+    padding-right: 56px;
+    font:
+        800 22px 'Hanken Grotesk',
+        sans-serif;
+    color: var(--text);
+    letter-spacing: -0.01em;
+    margin: 0 0 5px;
+}
+
+.cfg__sub {
+    font:
+        400 13px/1.5 'Hanken Grotesk',
+        sans-serif;
+    color: var(--muted);
+    margin: 0;
+}
+
+.cfg__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 38px 24px;
+}
+
+/* ── import ───────────────────────────────────────────────────── */
+
+.cfg__import {
+    margin-top: 20px;
+}
+
+/* The drop target and the JSON editor share one box so swapping between them never shifts
+   anything below. */
+.cfg__box {
+    width: 100%;
+    display: block;
+    box-sizing: border-box;
+    min-height: 168px;
+    border-radius: 12px;
+    background: var(--field);
+}
+
+.cfg__drop {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    padding: 16px;
+    border: 1px dashed var(--line);
+    color: var(--muted);
+    text-align: center;
+    transition: border-color 0.15s ease;
+}
+
+.cfg__drop--over {
+    border-color: var(--pri-text);
+    border-style: solid;
+}
+
+.cfg__drop-title {
+    font:
+        600 12.5px 'Hanken Grotesk',
+        sans-serif;
+    color: var(--text);
+}
+
+.cfg__drop-tap {
+    display: none;
+}
+
+@media (hover: none) {
+    .cfg__drop-drag {
+        display: none;
+    }
+
+    .cfg__drop-tap {
+        display: inline;
+    }
+}
+
+.cfg__choose {
+    padding: 9px 15px;
+    background: var(--pri);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font:
+        700 12px 'Hanken Grotesk',
+        sans-serif;
+    cursor: pointer;
+}
+
+.cfg__choose:hover {
+    background: var(--prih);
+}
+
+.cfg__json {
+    border: 1px solid var(--line);
+    outline: none;
+    resize: vertical;
+    padding: 11px 13px;
+    font:
+        500 11.5px/1.6 'JetBrains Mono',
+        monospace;
+    color: var(--text);
+}
+
+.cfg__json:focus {
+    border-color: var(--pri-text);
+}
+
+.cfg__swap {
+    display: block;
+    margin-top: 10px;
+    padding: 0;
+    background: none;
+    border: none;
+    font:
+        600 11.5px 'Hanken Grotesk',
+        sans-serif;
+    color: var(--muted);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+}
+
+.cfg__swap:hover {
+    color: var(--text);
+}
+
+.cfg__file {
+    display: none;
+}
+
+.cfg__note {
+    font:
+        500 11px/1.45 'Hanken Grotesk',
+        sans-serif;
+    color: var(--muted);
+    padding-top: 8px;
+}
+
+/* ── the path ─────────────────────────────────────────────────── */
+
+.cfg__rule {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 26px 0 18px;
+}
+
+.cfg__rule span {
+    font:
+        700 10px 'Hanken Grotesk',
+        sans-serif;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.cfg__hair {
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+}
+
+.cfg__path {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.cfg__hop {
+    position: relative;
+    padding: 0 0 24px 26px;
+}
+
+.cfg__hop::before {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 7px;
+    bottom: 0;
+    width: 1px;
+    background: var(--line);
+}
+
+.cfg__hop--last {
+    padding-bottom: 0;
+}
+
+.cfg__hop--last::before {
+    display: none;
+}
+
+.cfg__hop--edge {
+    padding-bottom: 18px;
+}
+
+.cfg__dot {
+    position: absolute;
+    left: 0;
+    top: 3px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1.5px var(--muted);
+}
+
+.cfg__dot--pri {
+    background: var(--pri-text);
+    box-shadow: none;
+}
+
+.cfg__dot--fork {
+    background: var(--text);
+    box-shadow: none;
+}
+
+.cfg__edge-label {
+    display: block;
+    font:
+        700 10.5px 'Hanken Grotesk',
+        sans-serif;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.cfg__hop-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.cfg__kicker {
+    font:
+        700 10.5px 'Hanken Grotesk',
+        sans-serif;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text);
+}
+
+.cfg__kicker--sub {
+    color: var(--muted);
+}
+
+.cfg__count {
+    font:
+        700 10.5px 'Hanken Grotesk',
+        sans-serif;
+    font-style: normal;
+    color: var(--muted);
+}
+
+.cfg__branch {
+    margin-top: 18px;
+    padding-left: 14px;
+    border-left: 1px solid var(--line);
+}
+
+/* ── help ─────────────────────────────────────────────────────── */
+
+.cfg__help {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+}
+
+.cfg__help-btn {
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    display: flex;
+}
+
+.cfg__help-btn:hover,
+.cfg__help-btn[aria-expanded='true'] {
+    color: var(--pri-text);
+}
+
+.cfg__help-tip {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: -8px;
+    z-index: 5;
+    width: max-content;
+    max-width: min(260px, calc(100vw - 48px));
+    padding: 10px 12px;
+    background: var(--menu);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+    font:
+        400 11.5px/1.5 'Hanken Grotesk',
+        sans-serif;
+    color: var(--text);
+    text-transform: none;
+    letter-spacing: normal;
+    white-space: normal;
+}
+
+.cfg__help-tip b {
+    font-weight: 700;
+}
+
+/* ── fields ───────────────────────────────────────────────────── */
+
+.cfg__line {
+    width: 100%;
+    display: block;
+    box-sizing: border-box;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    padding: 7px 0;
+    font:
+        500 12.5px/1.5 'JetBrains Mono',
+        monospace;
+    color: var(--text);
+    outline: none;
+}
+
+.cfg__line::placeholder {
+    color: var(--muted);
+}
+
+.cfg__line:focus {
+    border-bottom-color: var(--pri-text);
+}
+
+.cfg__blob {
+    resize: none;
+    overflow: hidden;
+    word-break: break-all;
+}
+
+.cfg__err {
+    font:
+        500 10.5px/1.4 'Hanken Grotesk',
+        sans-serif;
+    color: var(--unread);
+    padding-top: 5px;
+}
+
+.cfg__empty {
+    font:
+        400 11.5px/1.5 'Hanken Grotesk',
+        sans-serif;
+    color: var(--muted);
+    padding: 10px 12px;
+    background: var(--field);
+    border-radius: 10px;
+}
+
+/* ── ice rows ─────────────────────────────────────────────────── */
+
+.cfg__ice + .cfg__ice {
+    border-top: 1px solid var(--line);
+}
+
+.cfg__ice--open {
+    border-top-color: transparent;
+}
+
+.cfg__row {
+    width: 100%;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    text-align: left;
+}
+
+.cfg__row:hover .cfg__host {
+    color: var(--pri-text);
+}
+
+.cfg__chip {
+    font:
+        700 9px 'JetBrains Mono',
+        monospace;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 3px 5px;
+    border-radius: 4px;
+}
+
+/* The chip label is 9px, so it needs the full 4.5:1. The light tokens are tuned for larger
+   text and only reach ~2.1:1 on their own tint; darker inks of the same hue clear it. */
+.cfg__chip--stun {
+    color: #14603f;
+    background: color-mix(in srgb, var(--ok) 15%, transparent);
+}
+
+.cfg__chip--turn {
+    color: #7a4c00;
+    background: color-mix(in srgb, var(--warn) 18%, transparent);
+}
+
+:root[data-theme='dark'] .cfg__chip--stun {
+    color: var(--ok);
+}
+
+:root[data-theme='dark'] .cfg__chip--turn {
+    color: var(--warn);
+}
+
+.cfg__chip--none {
+    color: var(--muted);
+    background: var(--field);
+}
+
+.cfg__host {
+    font:
+        500 12px 'JetBrains Mono',
+        monospace;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cfg__chev {
+    transition: transform 0.16s ease;
+}
+
+.cfg__ice--open .cfg__chev {
+    transform: rotate(90deg);
+}
+
+.cfg__edit {
+    padding: 2px 0 14px;
+}
+
+.cfg__edit .cfg__line + .cfg__line {
+    margin-top: 8px;
+}
+
+.cfg__remove {
+    margin-top: 12px;
+    padding: 0;
+    background: none;
+    border: none;
+    font:
+        600 11px 'Hanken Grotesk',
+        sans-serif;
+    color: var(--muted);
+    cursor: pointer;
+}
+
+.cfg__remove:hover {
+    color: var(--unread);
+}
+
+.cfg__add {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 14px;
+    padding: 0;
+    background: none;
+    border: none;
+    font:
+        700 12px 'Hanken Grotesk',
+        sans-serif;
+    color: var(--pri-text);
+    cursor: pointer;
+}
+
+/* ── footer ───────────────────────────────────────────────────── */
+
+.cfg__foot {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 20px 38px;
+    border-top: 1px solid var(--line);
+}
+
+.cfg__ghost {
+    padding: 0;
+    background: none;
+    border: none;
+    font:
+        600 11.5px 'Hanken Grotesk',
+        sans-serif;
+    color: var(--muted);
+    cursor: pointer;
+}
+
+.cfg__ghost:hover:not(:disabled) {
+    color: var(--text);
+}
+
+.cfg__ghost:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.cfg__foot-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-width: 0;
+}
+
+.cfg__danger {
+    padding: 0;
+    background: none;
+    border: none;
+    font:
+        600 11.5px 'Hanken Grotesk',
+        sans-serif;
+    color: var(--unread);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.cfg__danger:hover:not(:disabled) {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.cfg__danger:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Mirrors the device-reset panel on the lock form. */
+.cfg__confirm {
+    width: 100%;
+    background: rgba(255, 59, 48, 0.08);
+    border: 1px solid var(--unread);
+    border-radius: 10px;
+    padding: 11px;
+}
+
+.cfg__confirm-copy {
+    font:
+        500 11px/1.45 'Hanken Grotesk',
+        sans-serif;
+    color: var(--text);
+    margin-bottom: 9px;
+}
+
+.cfg__confirm-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.cfg__confirm-yes {
+    flex: 1;
+    padding: 8px;
+    background: var(--unread);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font:
+        700 12px 'Hanken Grotesk',
+        sans-serif;
+    cursor: pointer;
+}
+
+.cfg__confirm-no {
+    flex: 1;
+    padding: 8px;
+    background: var(--field);
+    color: var(--text);
+    border: none;
+    border-radius: 8px;
+    font:
+        700 12px 'Hanken Grotesk',
+        sans-serif;
+    cursor: pointer;
+}
+
+.cfg__save {
+    padding: 11px 26px;
+    background: var(--pri);
+    color: #fff;
+    border: none;
+    border-radius: 11px;
+    font:
+        700 13px 'Hanken Grotesk',
+        sans-serif;
+    cursor: pointer;
+}
+
+.cfg__save:hover:not(:disabled) {
+    background: var(--prih);
+}
+
+.cfg__save:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cfg,
+    .cfg__chev,
+    .cfg__drop {
+        animation: none;
+        transition: none;
+    }
+}
+
+/* ── mobile · still the form column, so the page scrolls as it does on the unlock card ─── */
+
+@media (max-width: 760px) {
+    .lock__form.lock__form--settings {
+        overflow: visible;
+        padding: 42px 38px;
+    }
+
+    .cfg {
+        height: auto;
+        display: block;
+    }
+
+    .cfg__head {
+        padding: 0 0 14px;
+    }
+
+    .cfg__body {
+        overflow: visible;
+        padding: 0;
+    }
+
+    .cfg__foot {
+        margin-top: 26px;
+        padding: 18px 0 0;
+    }
+
+    /* Inputs jump to 16px on phones to stop iOS zooming, which a full URI cannot fit.
+       The collapsed row stays a truncated read-out and only expands into fields. */
+    .cfg__host {
+        font-size: 13px;
+    }
+
+    .cfg__row {
+        padding: 12px 0;
+    }
+
+    /* The help icons sit near the left edge, so anchoring the bubble to them pushes it off
+       one side or the other on a phone. Span the head row instead. */
+    .cfg__hop-head {
+        position: relative;
+    }
+
+    .cfg__help {
+        position: static;
+    }
+
+    .cfg__help-tip {
+        left: 0;
+        right: 0;
+        width: auto;
+        max-width: none;
+    }
+}

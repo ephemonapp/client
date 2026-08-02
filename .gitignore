@@ -1,0 +1,12 @@
+**/tmp
+**/.vscode
+**/.idea
+**/dist
+**/coverage
+**/test-results
+**/playwright-report
+!.github/badges/coverage/
+!.github/badges/coverage/**
+**/node_modules
+.DS_Store
+**/.prerender

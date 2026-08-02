@@ -1,0 +1,76 @@
+{
+    "name": "@ephemon/client",
+    "version": "0.6.0",
+    "description": "Ephemon Messenger SDK -- Beta 0.0.1",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/ephemonapp/client.git"
+    },
+    "workspaces": [
+        "packages/*"
+    ],
+    "private": true,
+    "scripts": {
+        "prettify": "npx prettier . --write",
+        "test": "cd packages/ephemon-core && npm run test && cd ../..",
+        "start": "cd packages/ephemon-app && npm run prerender && webpack serve --env environment=local",
+        "start:production": "cd packages/ephemon-app && npm run prerender && EPHEMON_PROXY_TARGET=https://s.ephemon.app EPHEMON_SERVER_URL=http://localhost:8081 EPHEMON_CLIENT_URL=http://localhost:8081 EPHEMON_APP_NAME=Ephemon EPHEMON_VAPID_KEY=BHAYDRAjMWXfg7dxFIOZYNLlxrVDohy_PbN7SXcrXapiZq0Jnt0VXsAx6ytkLArVVFDSfula4VRWm5HDvkVVRbA webpack serve --env environment=local",
+        "build": "npm run prettify && npm run build --workspace=@ephemon/app && npm run coverage:generate && npm run coverage:copy",
+        "publish": "npm run prettify && npm run publish --workspace=@ephemon/app && npm run coverage:generate && npm run coverage:copy",
+        "publish:oss": "npm run prettify && npm run publish:oss --workspace=@ephemon/app && npm run coverage:generate && npm run coverage:copy",
+        "audit:renders": "npm run audit:renders --workspace=@ephemon/app",
+        "analyze": "npm run analyze --workspace=@ephemon/app",
+        "coverage:generate": "cd packages/ephemon-core && npm run test:coverage && cd ../..",
+        "coverage:copy": "rm -rf packages/ephemon-core/coverage/lcov-report && mkdir -p packages/ephemon-app/dist/coverage && cp -r packages/ephemon-core/coverage/. packages/ephemon-app/dist/coverage/"
+    },
+    "prettier": {
+        "printWidth": 120,
+        "tabWidth": 4,
+        "useTabs": false,
+        "semi": true,
+        "singleQuote": true,
+        "jsxSingleQuote": true,
+        "trailingComma": "all",
+        "arrowParens": "always",
+        "bracketSpacing": true,
+        "quoteProps": "consistent",
+        "proseWrap": "always",
+        "htmlWhitespaceSensitivity": "css",
+        "vueIndentScriptAndStyle": true,
+        "endOfLine": "lf",
+        "singleAttributePerLine": true,
+        "bracketSameLine": false,
+        "embeddedLanguageFormatting": "auto",
+        "insertPragma": false,
+        "requirePragma": false,
+        "plugins": [
+            "@trivago/prettier-plugin-sort-imports"
+        ]
+    },
+    "lint-staged": {
+        "*": "npm run prettify"
+    },
+    "dependencies": {
+        "@ephemon/core": "^0.0.1-beta"
+    },
+    "devDependencies": {
+        "@playwright/test": "^1.62.0",
+        "@trivago/prettier-plugin-sort-imports": "^6.0.2",
+        "@types/node": "^26.1.2",
+        "css-minimizer-webpack-plugin": "^8.0.0",
+        "json-minimizer-webpack-plugin": "^5.0.1",
+        "lint-staged": "^17.2.0",
+        "mini-css-extract-plugin": "^2.10.2",
+        "prettier": "^3.9.6",
+        "terser-webpack-plugin": "^5.6.1",
+        "typescript": "^6.0.3",
+        "webpack": "^5.109.2",
+        "webpack-bundle-analyzer": "^5.3.1",
+        "webpack-cli": "^7.2.2",
+        "webpack-dev-server": "^6.0.0",
+        "webpack-stats-plugin": "^1.1.3"
+    },
+    "overrides": {
+        "uuid": "^11.1.1"
+    }
+}

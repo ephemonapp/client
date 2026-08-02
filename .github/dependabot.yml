@@ -1,0 +1,49 @@
+version: 2
+
+# TypeScript is pinned to 6.x in every manifest on purpose. 7.x is the native port and drops
+# the compiler API ts-loader builds on -- `ts.sys` and `ts.findConfigFile` are gone -- so any
+# build going through ts-loader dies with "Cannot read properties of undefined (reading
+# 'fileExists')". ts-loader declares `typescript: "*"`, so npm never warns. Moving to 7.x
+# means replacing ts-loader first; until then the major is ignored below.
+
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "typescript"
+        update-types: [ "version-update:semver-major" ]
+    groups:
+      webpack:
+        patterns:
+          - "webpack"
+          - "webpack-*"
+          - "*-webpack-plugin"
+  - package-ecosystem: "npm"
+    directory: "/packages/ephemon-core"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "typescript"
+        update-types: [ "version-update:semver-major" ]
+  - package-ecosystem: "npm"
+    directory: "/packages/ephemon-app"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "typescript"
+        update-types: [ "version-update:semver-major" ]
+    groups:
+      # react-dom/server refuses to run unless react and react-dom are on the exact
+      # same version, so a solo bump of either one breaks the prerender step.
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+  - package-ecosystem: "github-actions"
+    directory: "/.github/workflows"
+    schedule:
+      interval: "weekly"

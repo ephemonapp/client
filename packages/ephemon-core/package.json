@@ -1,0 +1,33 @@
+{
+    "name": "@ephemon/core",
+    "version": "0.0.1-beta",
+    "description": "Ephemon Messenger Core – Beta 0.0.1",
+    "main": "dist/index.js",
+    "private": true,
+    "scripts": {
+        "test": "vitest run",
+        "test:coverage": "vitest run --coverage",
+        "test:badges": "vitest run --coverage && npm run badges:generate",
+        "badges:generate": "coverage-badges --source coverage/coverage-summary.json --output coverage/badge-statements.svg --label statements --jsonPath total.statements.pct && coverage-badges --source coverage/coverage-summary.json --output coverage/badge-lines.svg --label lines --jsonPath total.lines.pct && coverage-badges --source coverage/coverage-summary.json --output coverage/badge-functions.svg --label functions --jsonPath total.functions.pct && coverage-badges --source coverage/coverage-summary.json --output coverage/badge-branches.svg --label branches --jsonPath total.branches.pct",
+        "build": "webpack --env environment=local",
+        "publish": "webpack --env environment=production"
+    },
+    "dependencies": {
+        "@microsoft/signalr": "^10.0.0",
+        "pako": "^3.0.1",
+        "tweetnacl": "^1.0.3",
+        "tweetnacl-util": "^0.15.1"
+    },
+    "devDependencies": {
+        "@types/jsdom": "^28.0.3",
+        "@types/pako": "^2.0.4",
+        "@vitest/coverage-v8": "^4.1.10",
+        "coverage-badges-cli": "^2.2.0",
+        "jsdom": "^30.0.1",
+        "ts-loader": "^9.6.2",
+        "typescript": "^6.0.3",
+        "vitest": "^4.1.9",
+        "webpack": "^5.109.2",
+        "webpack-cli": "^7.2.2"
+    }
+}

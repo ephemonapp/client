@@ -1,0 +1,26 @@
+{
+    "name": "__EPHEMON_APP_NAME__ Messenger App",
+    "short_name": "__EPHEMON_APP_NAME__",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#2E2596",
+    "theme_color": "#6A5BFF",
+    "icons": [
+        {
+            "src": "__EPHEMON_CLIENT_URL__/assets/android-chrome-192x192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "__EPHEMON_CLIENT_URL__/assets/android-chrome-512x512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "__EPHEMON_CLIENT_URL__/assets/maskable-512x512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

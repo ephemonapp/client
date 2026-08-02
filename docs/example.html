@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+    <head></head>
+    <body></body>
+    <script>
+        (function (w, h, s, p, r, m, i, n) {
+            if (w[p]) return;
+            m = 1 * new Date();
+            w[p] = {};
+            w[p].t = m;
+            r = h.getElementsByTagName(s)[0];
+            i = h.createElement(s);
+            i.async = true;
+            i.src = 'https://ephemon.app/core.min.js?_=' + m;
+            i.onload = function () {
+                n = Ephemon.getPrototype(console);
+                n.initialize({
+                    onMayWorkUnstably: (reason) => {
+                        console.warn(reason);
+                    },
+                    onTrace: (...args) => {
+                        console.trace(...args);
+                    },
+                    onDebug: (...args) => {
+                        console.debug(...args);
+                    },
+                    onLog: (...args) => {
+                        console.log(...args);
+                    },
+                    onWarn: (...args) => {
+                        console.warn(...args);
+                    },
+                    onError: (...args) => {
+                        console.error(...args);
+                    },
+                    serverUrl: 'https://s.ephemon.app',
+                    version: `${m}`,
+                    onNewVersion: () => {
+                        console.warn('Update needed!');
+                    },
+                    vapidKey: 'BHAYDRAjMWXfg7dxFIOZYNLlxrVDohy_PbN7SXcrXapiZq0Jnt0VXsAx6ytkLArVVFDSfula4VRWm5HDvkVVRbA',
+                    onPermissionDefault: () => {
+                        console.warn('Permissions default!');
+                    },
+                    onPermissionGranted: () => {
+                        console.warn('Permissions granted!');
+                    },
+                    onPermissionDenied: () => {
+                        console.warn('Permissions denied!');
+                    },
+                    signingKeyPair: n.generateSigningKeyPair(),
+                    onIncomingConnection: (connection) => console.warn('Incoming connection', connection),
+                    iceServers: [
+                        {
+                            urls: 'stun:***:3478',
+                        },
+                        {
+                            urls: 'turn:***:3478',
+                            username: '***',
+                            credential: '***',
+                        },
+                    ],
+                    focusOnDial: (peerPublicKey) => {
+                        console.warn('Dial!', peerPublicKey);
+                        return Promise.resolve(true);
+                    },
+                    requestDial: (peerPublicKey) => {
+                        if (window.confirm(`Incoming connection request from ${peerPublicKey}.\nAccept?`)) {
+                            return Promise.resolve(true);
+                        }
+                        console.warn('Declined.', peerPublicKey);
+                        return Promise.resolve(false);
+                    },
+                }).then((x) => {
+                    w[p] = x;
+                });
+            };
+            r.parentNode.insertBefore(i, r);
+        })(window, document, 'script', 'ephemon');
+    </script>
+</html>

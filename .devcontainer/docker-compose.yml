@@ -1,0 +1,59 @@
+name: ephemon-devcontainer
+
+services:
+    redis:
+        image: redis:latest
+        restart: unless-stopped
+        networks:
+            - lan
+
+    mongo:
+        image: mongo:latest
+        restart: unless-stopped
+        networks:
+            - lan
+
+    server:
+        image: ephemonapp/server:latest
+        restart: unless-stopped
+        env_file:
+            - ./tmp/.env
+        environment:
+            ASPNETCORE_ENVIRONMENT: 'Development'
+            PORT: '80'
+            CORS: ''
+            PATH_BASE: ''
+            REDIS_CONNECTION_STRING: 'redis:6379'
+            MONGO_CONNECTION_STRING: 'mongodb://mongo:27017'
+            NOTIFICATION_SUBJECT: 'mailto:ephemon-local@example.com'
+        depends_on:
+            - redis
+            - mongo
+        ports:
+            - '5027:80'
+        networks:
+            - lan
+
+    client:
+        build:
+            context: ..
+            dockerfile: .devcontainer/Dockerfile
+        image: ephemon-client-dev
+        command: sleep infinity
+        working_dir: /workspaces/client
+        volumes:
+            - ..:/workspaces/client:cached
+        env_file:
+            - ./tmp/.env
+        depends_on:
+            - server
+            - redis
+            - mongo
+        ports:
+            - '8081:8081'
+        networks:
+            - lan
+
+networks:
+    lan:
+        driver: bridge

@@ -1,0 +1,46 @@
+.permission-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 32px;
+    text-align: center;
+    background: radial-gradient(circle at 28% 22%, var(--brand), var(--brand-deep) 82%);
+    color: var(--on-brand);
+}
+
+.permission-overlay__title {
+    font:
+        800 24px 'Hanken Grotesk',
+        sans-serif;
+    letter-spacing: -0.01em;
+}
+
+.permission-overlay__text {
+    font:
+        400 15px/1.6 'Hanken Grotesk',
+        sans-serif;
+    color: var(--on-brand-strong);
+    max-width: 380px;
+}
+
+.permission-overlay__btn {
+    margin-top: 6px;
+    padding: 13px 26px;
+    background: var(--on-brand);
+    color: var(--pri);
+    border: none;
+    border-radius: 12px;
+    font:
+        700 14px 'Hanken Grotesk',
+        sans-serif;
+    cursor: pointer;
+}
+
+.permission-overlay__btn:hover {
+    opacity: 0.92;
+}

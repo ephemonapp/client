@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+    <head></head>
+    <body></body>
+    <script>
+        (function (w, h, s, p, r, m, i, n) {
+            if (w[p]) return;
+            m = 1 * new Date();
+            w[p] = {};
+            w[p].t = m;
+            r = h.getElementsByTagName(s)[0];
+            i = h.createElement(s);
+            i.async = true;
+            i.src = 'https://ephemon.app/core.min.js?_=' + m;
+            i.onload = function () {
+                n = Ephemon.getPrototype(console);
+                n.initialize({
+                    serverUrl: 'https://s.ephemon.app',
+                    signingKeyPair: n.generateSigningKeyPair(),
+                }).then((x) => {
+                    w[p] = x;
+                });
+            };
+            r.parentNode.insertBefore(i, r);
+        })(window, document, 'script', 'ephemon');
+    </script>
+</html>

@@ -1,0 +1,41 @@
+name: Coverage Badges
+permissions:
+  contents: read
+  pull-requests: write
+
+on:
+  workflow_run:
+    workflows: [ "Deploy to S3" ]
+    types:
+      - completed
+
+jobs:
+  coverage-badges:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - name: Use Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate coverage badges
+        run: npm run test:badges --workspace @ephemon/core
+      - name: Copy coverage badges to .github/badges/coverage
+        run: |
+          mkdir -p .github/badges/coverage
+          cp packages/ephemon-core/coverage/badge-statements.svg .github/badges/coverage/
+          cp packages/ephemon-core/coverage/badge-lines.svg .github/badges/coverage/
+          cp packages/ephemon-core/coverage/badge-functions.svg .github/badges/coverage/
+          cp packages/ephemon-core/coverage/badge-branches.svg .github/badges/coverage/
+      - name: Create Pull Request for badges
+        uses: peter-evans/create-pull-request@v8
+        with:
+          commit-message: "chore: [skip ci] update coverage badges"
+          branch: badges/update-${{ github.run_id }}
+          title: "chore: [skip ci] update coverage badges"
+          body: "Automatic update of coverage badges."
+          base: main

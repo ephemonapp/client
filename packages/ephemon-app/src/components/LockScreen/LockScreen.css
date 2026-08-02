@@ -1,0 +1,387 @@
+.lock {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: row;
+    background: radial-gradient(circle at 28% 22%, var(--surface), var(--shell) 82%);
+    overflow-y: auto;
+    padding-top: env(safe-area-inset-top);
+}
+
+.lock__landing {
+    flex: 0 0 56%;
+    color: var(--text);
+    padding: 46px 52px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.lock__brand {
+    display: flex;
+    align-items: center;
+    gap: 21px;
+    padding-bottom: 14px;
+}
+
+.lock__wordmark {
+    font:
+        800 34px 'Hanken Grotesk',
+        sans-serif;
+    letter-spacing: -0.01em;
+}
+
+.lock__center {
+    margin: auto 0;
+    max-width: 540px;
+}
+
+.lock__headline {
+    font:
+        800 clamp(34px, 3.6vw, 48px) / 1.07 'Hanken Grotesk',
+        sans-serif;
+    letter-spacing: -0.02em;
+    margin: 0 0 18px;
+}
+
+.lock__sub {
+    font:
+        400 17px/1.6 'Hanken Grotesk',
+        sans-serif;
+    color: var(--text);
+    margin: 0 0 34px;
+}
+
+.lock__features {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+}
+
+.lock__feature {
+    display: flex;
+    gap: 15px;
+    align-items: flex-start;
+}
+
+.lock__feature > svg {
+    flex: none;
+    margin-top: 1px;
+}
+
+.lock__feature-title {
+    font-weight: 700;
+    font-size: 16.5px;
+}
+
+.lock__feature-desc {
+    font-size: 14px;
+    color: var(--muted);
+    margin-top: 2px;
+}
+
+.lock__landing-footer {
+    padding-top: 24px;
+    font:
+        500 11px 'JetBrains Mono',
+        monospace;
+    color: var(--muted);
+}
+
+.lock__form {
+    flex: 0 0 44%;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 42px 38px;
+    position: relative;
+    min-height: 0;
+}
+
+.lock__actions,
+.lock-skel__actions {
+    position: absolute;
+    top: 18px;
+    right: 18px;
+    display: flex;
+    gap: 8px;
+    z-index: 1;
+}
+
+.lock__action {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.lock__action:hover {
+    color: var(--pri-text);
+    border-color: var(--pri-text);
+}
+
+.lock-skel__action.skeleton {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+}
+
+.lock-skel__title {
+    height: 28px;
+    width: 62%;
+    margin-bottom: 11px;
+}
+
+.lock-skel__sub {
+    height: 12px;
+    margin-bottom: 7px;
+}
+
+.lock-skel__sub--short {
+    width: 74%;
+    margin-bottom: 24px;
+}
+
+.lock-skel__label {
+    height: 12px;
+    width: 72px;
+    margin-bottom: 9px;
+}
+
+.lock-skel__field {
+    height: 47px;
+    border-radius: 12px;
+    margin-bottom: 28px;
+}
+
+.lock-skel__submit {
+    height: 43px;
+    border-radius: 12px;
+}
+
+.lock-skel__reassure {
+    height: 11px;
+    width: 76%;
+    margin: 19px auto 0;
+}
+
+.lock-skel__links {
+    display: flex;
+    justify-content: center;
+    gap: 18px;
+    margin-top: 17px;
+}
+
+.lock-skel__link {
+    height: 12px;
+    width: 52px;
+}
+
+.lock-skel__reset {
+    height: 11px;
+    width: 132px;
+    margin: 15px auto 0;
+}
+
+.lock__card {
+    max-width: 340px;
+    margin: 0 auto;
+    width: 100%;
+    animation: rise 0.4s ease;
+}
+
+.lock__unlock-form {
+    margin: 0;
+}
+
+.lock__title {
+    font:
+        800 22px 'Hanken Grotesk',
+        sans-serif;
+    color: var(--text);
+    letter-spacing: -0.01em;
+    margin-bottom: 5px;
+}
+
+.lock__form-sub {
+    font:
+        400 13px/1.5 'Hanken Grotesk',
+        sans-serif;
+    color: var(--muted);
+    margin-bottom: 20px;
+}
+
+.lock__label {
+    font:
+        600 12px 'Hanken Grotesk',
+        sans-serif;
+    color: var(--text);
+    margin-bottom: 7px;
+}
+
+.lock__field {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    background: var(--field);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 2px 13px;
+    margin-bottom: 6px;
+}
+
+.lock__field.shake {
+    animation: shake 0.5s;
+    border-color: var(--unread);
+}
+
+.lock__field > svg {
+    flex: none;
+    color: var(--muted);
+}
+
+.lock__field input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    outline: none;
+    color: var(--text);
+    font-size: 15px;
+    padding: 11px 0;
+}
+
+.lock__error {
+    height: 16px;
+    font:
+        500 11px 'Hanken Grotesk',
+        sans-serif;
+    color: var(--unread);
+    margin-bottom: 6px;
+}
+
+.lock__submit {
+    width: 100%;
+    padding: 12px;
+    background: var(--pri);
+    color: var(--on-brand);
+    border: none;
+    border-radius: 12px;
+    font:
+        700 14px 'Hanken Grotesk',
+        sans-serif;
+    cursor: pointer;
+}
+
+.lock__submit:hover {
+    background: var(--prih);
+}
+
+.lock__reassure {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 16px;
+    font:
+        500 10.5px 'JetBrains Mono',
+        monospace;
+    color: var(--muted);
+}
+
+.lock__links {
+    display: flex;
+    justify-content: center;
+    gap: 18px;
+    margin-top: 14px;
+    font:
+        500 11.5px 'Hanken Grotesk',
+        sans-serif;
+}
+
+.lock__links a {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.lock__reset-wrap {
+    text-align: center;
+    margin-top: 12px;
+}
+
+.lock__reset-link {
+    cursor: pointer;
+    font:
+        500 11px 'Hanken Grotesk',
+        sans-serif;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
+}
+
+.lock__reset-card {
+    background: var(--err-bg);
+    border: 1px solid var(--unread);
+    border-radius: 10px;
+    padding: 11px;
+    text-align: left;
+}
+
+.lock__reset-copy {
+    font:
+        500 11px/1.45 'Hanken Grotesk',
+        sans-serif;
+    color: var(--text);
+    margin-bottom: 9px;
+}
+
+.lock__reset-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.lock__reset-erase {
+    flex: 1;
+    padding: 8px;
+    background: var(--unread);
+    color: var(--on-brand);
+    border: none;
+    border-radius: 8px;
+    font:
+        700 12px 'Hanken Grotesk',
+        sans-serif;
+    cursor: pointer;
+}
+
+.lock__reset-cancel {
+    flex: 1;
+    padding: 8px;
+    background: var(--field);
+    color: var(--text);
+    border: none;
+    border-radius: 8px;
+    font:
+        700 12px 'Hanken Grotesk',
+        sans-serif;
+    cursor: pointer;
+}
+
+@media (max-width: 760px) {
+    .lock {
+        flex-direction: column;
+    }
+    .lock__landing {
+        flex: 0 0 auto;
+        min-height: auto;
+    }
+    .lock__form {
+        flex: 1 0 auto;
+        min-height: 60vh;
+    }
+}

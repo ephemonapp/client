@@ -1,0 +1,529 @@
+title Ephemon Proto
+
+materialdesignicons F0004 Alice
+image data:image/png;base64,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 Ephemon
+materialdesignicons F048B STUN/TURN
+materialdesignicons F0004 Bob
+
+group Registration
+
+Alice->Alice:generate_signing_key_pair();
+activate Alice
+Alice<<--Alice:[\n  alice_public_signing_key,\n  alice_private_signing_key\n]
+deactivate Alice
+
+Alice->Alice:gather_webpush_subscription();
+activate Alice
+note left of Alice:alice_webpush_subscription = [\n  alice_webpush_subscription_endpoint,\n  alice_webpush_subscription_expiration,\n  [\n    alice_webpush_subscription_keys_p256dh,\n    alice_webpush_subscription_keys_auth\n  ]\n]
+Alice<<--Alice:alice_webpush_subscription
+deactivate Alice
+
+note left of Alice:alice_update_data = [\n  alice_public_signing_key,\n  alice_webpush_subscription\n]
+
+Alice->Alice:sign(\n  alice_update_data,\n  alice_private_signing_key\n);
+activate Alice
+Alice<<--Alice:alice_update_data_signature
+deactivate Alice
+
+Alice->>Ephemon:call(\n  'update',\n  alice_update_data,\n  alice_update_data_signature\n);
+activate Ephemon
+
+Ephemon->Ephemon:get_server_timestamp();
+activate Ephemon
+Ephemon<<--Ephemon:server_timestamp
+deactivate Ephemon
+
+Ephemon->Ephemon:validate_signature(\n  alice_update_data,\n  alice_update_data_signature,\n  alice_public_signing_key\n);
+activate Ephemon
+Ephemon<<--Ephemon:ok
+deactivate Ephemon
+
+Ephemon->Ephemon:store(\n  alice_public_signing_key,\n  alice_webpush_subscription\n);
+activate Ephemon
+Ephemon<<--Ephemon:ok
+deactivate Ephemon
+
+Alice<<--Ephemon:server_timestamp
+deactivate Ephemon
+
+Alice->Alice:get_alice_timestamp();
+activate Alice
+Alice<<--Alice:alice_timestamp
+deactivate Alice
+
+note left of Alice:alice_timestamp_delta = server_timestamp - alice_timestamp
+
+end
+
+group Connection
+
+group Connection :: Send Dial
+
+Alice->Alice:generate_encryption_key_pair();
+activate Alice
+Alice<<--Alice:[\n  alice_public_encryption_key,\n  alice_private_encryption_key\n]
+deactivate Alice
+
+Alice->Alice:get_alice_timestamp();
+activate Alice
+Alice<<--Alice:alice_timestamp
+deactivate Alice
+
+note left of Alice:alice_server_timestamp = alice_timestamp + alice_timestamp_delta
+
+note left of Alice:alice_bob_public_signing_key = bob_public_signing_key
+
+note left of Alice:alice_dial_data = [\n  alice_public_signing_key,\n  alice_server_timestamp,\n  alice_bob_public_signing_key\n  alice_public_encryption_key\n]
+
+Alice->Alice:sign(\n  alice_dial_data,\n  alice_private_signing_key\n);
+activate Alice
+Alice<<--Alice:alice_dial_data_signature
+deactivate Alice
+
+Alice->>Ephemon:call(\n  'dial',\n  alice_dial_data,\n  alice_dial_data_signature\n);
+activate Ephemon
+
+Ephemon->Ephemon:get_server_timestamp();
+activate Ephemon
+Ephemon<<--Ephemon:server_timestamp
+deactivate Ephemon
+
+Ephemon->Ephemon:validate_timestamp(\n  alice_server_timestamp,\n  server_timestamp\n);
+activate Ephemon
+Ephemon<<--Ephemon:ok
+deactivate Ephemon
+
+Ephemon->Ephemon:validate_signature(\n  alice_dial_data,\n  alice_dial_data_signature,\n  alice_public_signing_key\n);
+activate Ephemon
+Ephemon<<--Ephemon:ok
+deactivate Ephemon
+
+Ephemon->>Bob:call(\n  'dial'\n  alice_dial_data,\n  alice_dial_data_signature\n);
+activate Bob
+space
+note right of Bob:See 'Connection :: Receive Dial'.
+deactivate Bob
+
+Alice<<--Ephemon:server_timestamp
+deactivate Ephemon
+
+Alice->Alice:get_alice_timestamp();
+activate Alice
+Alice<<--Alice:alice_timestamp
+deactivate Alice
+
+note left of Alice:alice_timestamp_delta = server_timestamp - alice_timestamp
+
+end
+
+group Connection :: Receive Dial
+
+Alice<<-Ephemon:call(\n  'dial'\n  bob_dial_data,\n  bob_dial_data_signature\n);
+activate Alice
+
+Alice->Alice:get_alice_timestamp();
+activate Alice
+Alice<<--Alice:alice_timestamp
+deactivate Alice
+
+note left of Alice:alice_server_timestamp = alice_timestamp + alice_timestamp_delta
+
+Alice->Alice:validate_timestamp(\n  bob_server_timestamp,\n  alice_server_timestamp\n);
+activate Alice
+Alice<<--Alice:ok
+deactivate Alice
+
+Alice->Alice:validate_public_signing_key(\n  bob_alice_public_signing_key,\n  alice_public_signing_key\n);
+activate Alice
+Alice<<--Alice:ok
+deactivate Alice
+
+Alice->Alice:validate_signature(\n  bob_dial_data,\n  bob_dial_data_signature,\n  bob_public_signing_key\n);
+activate Alice
+Alice<<--Alice:ok
+deactivate Alice
+
+Alice->Alice:generate_encryption_key_pair();
+activate Alice
+Alice<<--Alice:[\n  alice_public_encryption_key,\n  alice_private_encryption_key\n]
+deactivate Alice
+
+Alice->Alice:generate_shared_encryption_key(\n  bob_public_encryption_key\n  alice_private_encryption_key,\n);
+activate Alice
+Alice<<--Alice:shared_encryption_key
+deactivate Alice
+
+Alice->STUN/TURN:gather_offer();
+activate STUN/TURN
+Alice<<--STUN/TURN:alice_offer
+deactivate STUN/TURN
+
+Alice->>Alice:gather_ice(\n  alice_offer\n);
+activate Alice
+space
+note right of Alice:See 'Connection :: Gather Ice'.
+deactivate Alice
+
+Alice->Alice:encrypt(\n  alice_offer,\n  shared_encryption_key\n);
+activate Alice
+Alice<<--Alice:alice_offer_encrypted
+deactivate Alice
+
+Alice->Alice:get_alice_timestamp();
+activate Alice
+Alice<<--Alice:alice_timestamp
+deactivate Alice
+
+note left of Alice:alice_server_timestamp = alice_timestamp + alice_timestamp_delta
+
+note left of Alice:alice_bob_public_signing_key = bob_public_signing_key
+
+note left of Alice:alice_offer_data = [\n  alice_public_signing_key,\n  alice_server_timestamp,\n  alice_bob_public_signing_key\n  alice_public_encryption_key\n  alice_offer_encrypted\n]
+
+Alice->Alice:sign(\n  alice_offer_data,\n  alice_private_signing_key\n);
+activate Alice
+Alice<<--Alice:alice_offer_data_signature
+deactivate Alice
+
+Alice->>Ephemon:call(\n  'offer',\n  alice_offer_data,\n  alice_offer_data_signature\n);
+activate Ephemon
+
+Ephemon->Ephemon:get_server_timestamp();
+activate Ephemon
+Ephemon<<--Ephemon:server_timestamp
+deactivate Ephemon
+
+Ephemon->Ephemon:validate_timestamp(\n  alice_server_timestamp,\n  server_timestamp\n);
+activate Ephemon
+Ephemon<<--Ephemon:ok
+deactivate Ephemon
+
+Ephemon->Ephemon:validate_signature(\n  alice_offer_data,\n  alice_offer_data_signature,\n  alice_public_signing_key\n);
+activate Ephemon
+Ephemon<<--Ephemon:ok
+deactivate Ephemon
+
+Ephemon->>Bob:call(\n  'offer',\n  alice_offer_data,\n  alice_offer_data_signature\n);
+activate Bob
+space
+note right of Bob:See 'Connection :: Receive Offer'.
+deactivate Bob
+
+Alice<<--Ephemon:server_timestamp
+deactivate Ephemon
+
+Alice->Alice:get_alice_timestamp();
+activate Alice
+Alice<<--Alice:alice_timestamp
+deactivate Alice
+
+note left of Alice:alice_timestamp_delta = server_timestamp - alice_timestamp
+
+deactivate Alice
+
+end
+
+group Connection :: Receive Offer
+
+Alice<<-Ephemon:call(\n  'offer'\n  bob_offer_data,\n  bob_offer_data_signature\n);
+activate Alice
+
+Alice->Alice:get_alice_timestamp();
+activate Alice
+Alice<<--Alice:alice_timestamp
+deactivate Alice
+
+note left of Alice:alice_server_timestamp = alice_timestamp + alice_timestamp_delta
+
+Alice->Alice:validate_timestamp(\n  bob_server_timestamp,\n  alice_server_timestamp\n);
+activate Alice
+Alice<<--Alice:ok
+deactivate Alice
+
+Alice->Alice:validate_public_signing_key(\n  bob_alice_public_signing_key,\n  alice_public_signing_key\n);
+activate Alice
+Alice<<--Alice:ok
+deactivate Alice
+
+Alice->Alice:validate_signature(\n  bob_offer_data,\n  bob_offer_data_signature,\n  bob_public_signing_key\n);
+activate Alice
+Alice<<--Alice:ok
+deactivate Alice
+
+Alice->Alice:generate_shared_encryption_key(\n  bob_public_encryption_key\n  alice_private_encryption_key,\n);
+activate Alice
+Alice<<--Alice:shared_encryption_key
+deactivate Alice
+
+Alice->Alice:decrypt(\n  bob_offer_encrypted\n  shared_encryption_key,\n);
+activate Alice
+Alice<<--Alice:bob_offer
+deactivate Alice
+
+Alice->STUN/TURN:gather_answer(\n  bob_offer\n);
+activate STUN/TURN
+Alice<<--STUN/TURN:alice_answer
+deactivate STUN/TURN
+
+Alice->>Alice:gather_ice(\n  alice_answer\n);
+activate Alice
+space
+note right of Alice:See 'Connection :: Gather Ice'.
+deactivate Alice
+
+Alice->Alice:encrypt(\n  alice_offer,\n  shared_encryption_key\n);
+activate Alice
+Alice<<--Alice:alice_answer_encrypted
+deactivate Alice
+
+Alice->Alice:get_alice_timestamp();
+activate Alice
+Alice<<--Alice:alice_timestamp
+deactivate Alice
+
+note left of Alice:alice_server_timestamp = alice_timestamp + alice_timestamp_delta
+
+note left of Alice:alice_bob_public_signing_key = bob_public_signing_key
+
+note left of Alice:alice_answer_data = [\n  alice_public_signing_key,\n  alice_server_timestamp,\n  alice_bob_public_signing_key\n  alice_public_encryption_key\n  alice_answer_encrypted\n]
+
+Alice->Alice:sign(\n  alice_answer_data,\n  alice_private_signing_key\n);
+activate Alice
+Alice<<--Alice:alice_answer_data_signature
+deactivate Alice
+
+Alice->>Ephemon:call(\n  'answer',\n  alice_answer_data,\n  alice_answer_data_signature\n);
+activate Ephemon
+
+Ephemon->Ephemon:get_server_timestamp();
+activate Ephemon
+Ephemon<<--Ephemon:server_timestamp
+deactivate Ephemon
+
+Ephemon->Ephemon:validate_timestamp(\n  alice_server_timestamp,\n  server_timestamp\n);
+activate Ephemon
+Ephemon<<--Ephemon:ok
+deactivate Ephemon
+
+Ephemon->Ephemon:validate_signature(\n  alice_answer_data,\n  alice_answer_data_signature,\n  alice_public_signing_key\n);
+activate Ephemon
+Ephemon<<--Ephemon:ok
+deactivate Ephemon
+
+Ephemon->>Bob:call(\n  'answer',\n  alice_answer_data,\n  alice_answer_data_signature\n);
+activate Bob
+space
+note right of Bob:See 'Connection :: Receive Answer'.
+deactivate Bob
+
+Alice<<--Ephemon:server_timestamp
+deactivate Ephemon
+
+Alice->Alice:get_alice_timestamp();
+activate Alice
+Alice<<--Alice:alice_timestamp
+deactivate Alice
+
+note left of Alice:alice_timestamp_delta = server_timestamp - alice_timestamp
+
+deactivate Alice
+
+end
+
+group Connection :: Receive Answer
+
+Alice<<-Ephemon:call(\n  'answer'\n  bob_answer_data,\n  bob_answer_data_signature\n);
+activate Alice
+
+Alice->Alice:get_alice_timestamp();
+activate Alice
+Alice<<--Alice:alice_timestamp
+deactivate Alice
+
+note left of Alice:alice_server_timestamp = alice_timestamp + alice_timestamp_delta
+
+Alice->Alice:validate_timestamp(\n  bob_server_timestamp,\n  alice_server_timestamp\n);
+activate Alice
+Alice<<--Alice:ok
+deactivate Alice
+
+Alice->Alice:validate_public_signing_key(\n  bob_alice_public_signing_key,\n  alice_public_signing_key\n);
+activate Alice
+Alice<<--Alice:ok
+deactivate Alice
+
+Alice->Alice:validate_signature(\n  bob_answer_data,\n  bob_answer_data_signature,\n  bob_public_signing_key\n);
+activate Alice
+Alice<<--Alice:ok
+deactivate Alice
+
+Alice->Alice:generate_shared_encryption_key(\n  bob_public_encryption_key\n  alice_private_encryption_key,\n);
+activate Alice
+Alice<<--Alice:shared_encryption_key
+deactivate Alice
+
+Alice->Alice:decrypt(\n  bob_answer_encrypted\n  shared_encryption_key,\n);
+activate Alice
+Alice<<--Alice:bob_answer
+deactivate Alice
+
+Alice->Alice:await_rtc_connected(\n  alice_offer\n  bob_answer,\n);
+activate Alice
+Alice<<--Alice:ok
+deactivate Alice
+
+note left of Alice:Connected. See 'Send Message'
+
+deactivate Alice
+
+end
+
+group Connection :: Gather Ice
+
+Alice->>Alice:gather_ice(\n  alice_answer\n);
+activate Alice
+space
+
+Alice->STUN/TURN:gather_ice();
+activate STUN/TURN
+Alice<<--STUN/TURN:alice_ice
+deactivate STUN/TURN
+
+Alice->Alice:encrypt(\n  alice_ice,\n  shared_encryption_key\n);
+activate Alice
+Alice<<--Alice:alice_ice_encrypted
+deactivate Alice
+
+Alice->Alice:get_alice_timestamp();
+activate Alice
+Alice<<--Alice:alice_timestamp
+deactivate Alice
+
+note left of Alice:alice_server_timestamp = alice_timestamp + alice_timestamp_delta
+
+note left of Alice:alice_bob_public_signing_key = bob_public_signing_key
+
+note left of Alice:alice_ice_data = [\n  alice_public_signing_key,\n  alice_server_timestamp,\n  alice_bob_public_signing_key\n  alice_public_encryption_key\n  alice_ice_encrypted\n]
+
+Alice->Alice:sign(\n  alice_ice_data,\n  alice_private_signing_key\n);
+activate Alice
+Alice<<--Alice:alice_ice_data_signature
+deactivate Alice
+
+Alice->>Ephemon:call(\n  'ice',\n  alice_ice_data,\n  alice_ice_data_signature\n);
+activate Ephemon
+
+Ephemon->Ephemon:get_server_timestamp();
+activate Ephemon
+Ephemon<<--Ephemon:server_timestamp
+deactivate Ephemon
+
+Ephemon->Ephemon:validate_timestamp(\n  alice_server_timestamp,\n  server_timestamp\n);
+activate Ephemon
+Ephemon<<--Ephemon:ok
+deactivate Ephemon
+
+Ephemon->Ephemon:validate_signature(\n  alice_ice_data,\n  alice_ice_data_signature,\n  alice_public_signing_key\n);
+activate Ephemon
+Ephemon<<--Ephemon:ok
+deactivate Ephemon
+
+Ephemon->>Bob:call(\n  'ice',\n  alice_ice_data,\n  alice_ice_data_signature\n);
+activate Bob
+space
+note right of Bob:See 'Connection :: Receive Ice'.
+deactivate Bob
+
+Alice<<--Ephemon:server_timestamp
+deactivate Ephemon
+
+Alice->Alice:get_alice_timestamp();
+activate Alice
+Alice<<--Alice:alice_timestamp
+deactivate Alice
+
+note left of Alice:alice_timestamp_delta = server_timestamp - alice_timestamp
+
+deactivate Alice
+
+end
+
+group Connection :: Receive Ice
+
+Alice<<-Ephemon:call(\n  'ice'\n  bob_ice_data,\n  bob_ice_data_signature\n);
+activate Alice
+
+Alice->Alice:get_alice_timestamp();
+activate Alice
+Alice<<--Alice:alice_timestamp
+deactivate Alice
+
+note left of Alice:alice_server_timestamp = alice_timestamp + alice_timestamp_delta
+
+Alice->Alice:validate_timestamp(\n  bob_server_timestamp,\n  alice_server_timestamp\n);
+activate Alice
+Alice<<--Alice:ok
+deactivate Alice
+
+Alice->Alice:validate_public_signing_key(\n  bob_alice_public_signing_key,\n  alice_public_signing_key\n);
+activate Alice
+Alice<<--Alice:ok
+deactivate Alice
+
+Alice->Alice:validate_signature(\n  bob_ice_data,\n  bob_ice_data_signature,\n  bob_public_signing_key\n);
+activate Alice
+Alice<<--Alice:ok
+deactivate Alice
+
+Alice->Alice:generate_shared_encryption_key(\n  bob_public_encryption_key\n  alice_private_encryption_key,\n);
+activate Alice
+Alice<<--Alice:shared_encryption_key
+deactivate Alice
+
+Alice->Alice:decrypt(\n  bob_ice_encrypted\n  shared_encryption_key,\n);
+activate Alice
+Alice<<--Alice:bob_ice
+deactivate Alice
+
+Alice->Alice:add_rtc_ice(\n  bob_ice,\n);
+activate Alice
+Alice<<--Alice:ok
+deactivate Alice
+
+space
+
+deactivate Alice
+
+end
+
+end
+
+group Send Message
+
+Alice->Alice:generate_shared_encryption_key(\n  bob_public_encryption_key\n  alice_private_encryption_key,\n);
+activate Alice
+Alice<<--Alice:shared_encryption_key
+deactivate Alice
+
+Alice->Alice:encrypt(\n  message\n  shared_encryption_key,\n);
+activate Alice
+Alice<<--Alice:message_encrypted
+deactivate Alice
+
+Alice->Bob:message_encrypted
+activate Bob
+
+Bob->Bob:generate_shared_encryption_key(\n  alice_public_encryption_key\n  bob_private_encryption_key,\n);
+activate Bob
+Bob<<--Bob:shared_encryption_key
+deactivate Bob
+
+Bob->Bob:decrypt(\n  message_encrypted\n  shared_encryption_key,\n);
+activate Bob
+Bob<<--Bob:message
+deactivate Bob
+
+note right of Bob:Done.
+deactivate Bob
+
+end

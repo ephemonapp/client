@@ -1,0 +1,49 @@
+name: PR Checks
+
+on:
+  pull_request:
+    types: [ opened, synchronize, reopened ]
+
+jobs:
+  test-and-coverage:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Use Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: npm ci
+      - name: Build bundle
+        run: npm run publish --workspace=@ephemon/app
+      - name: Run tests and generate coverage
+        id: test_cov
+        run: |
+          set -o pipefail
+          npm run coverage:generate 2>&1 | tee test.log
+      - name: Check test result
+        id: check_test
+        run: |
+          if grep -q "FAIL" test.log; then
+            echo "failed=true" >> $GITHUB_OUTPUT
+          else
+            echo "failed=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Generate Markdown coverage summary
+        if: steps.check_test.outputs.failed == 'false'
+        uses: romeovs/lcov-reporter-action@v0.4.0
+        with:
+          lcov-file: packages/ephemon-core/coverage/lcov.info
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          delete-old-comments: true
+      - name: Comment test errors on PR
+        if: steps.check_test.outputs.failed == 'true'
+        uses: thollander/actions-comment-pull-request@v3
+        with:
+          filePath: test.log
+          comment_tag: TEST_ERRORS

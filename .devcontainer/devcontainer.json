@@ -1,0 +1,33 @@
+{
+    "name": "Ephemon Dev Container",
+    "dockerComposeFile": ["docker-compose.yml"],
+    "service": "client",
+    "workspaceFolder": "/workspaces/client",
+    "forwardPorts": [8081, 5027],
+    "portsAttributes": {
+        "8081": {
+            "label": "client"
+        },
+        "5027": {
+            "label": "server"
+        }
+    },
+    "features": {
+        "ghcr.io/devcontainers/features/github-cli:1": {}
+    },
+    "mounts": ["source=${localEnv:HOME}/.ssh,target=/home/node/.ssh,type=bind,consistency=cached"],
+    "initializeCommand": "bash .devcontainer/scripts/generate-vapid.sh",
+    "postStartCommand": "bash .devcontainer/scripts/codespace/set-ports-visibility.sh",
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "terminal.integrated.shell.linux": "/bin/bash"
+            },
+            "extensions": ["esbenp.prettier-vscode"]
+        }
+    },
+    "remoteUser": "node",
+    "containerEnv": {
+        "DEV_CONTAINER_ENV": "devcontainer"
+    }
+}
