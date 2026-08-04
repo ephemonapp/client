@@ -8,7 +8,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Refuse to run from main
+        if: github.ref_name == 'main'
+        run: |
+          echo "::error::deploy-v2 must not run from main. Dispatch it from a feature branch."
+          exit 1
+
   deploy-next:
+    needs: guard
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -58,6 +69,7 @@ jobs:
           SOURCE_DIR: packages/ephemon-app/dist
 
   prerelease-oss:
+    needs: guard
     runs-on: ubuntu-latest
     permissions:
       contents: write
