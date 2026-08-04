@@ -1,3 +1,4 @@
+import { getLogger } from '../../lib/logStore';
 import React, { useCallback, useState } from 'react';
 import { prepareWasm, useZxing } from 'react-zxing';
 import wasmUrl from 'zxing-wasm/reader/zxing_reader.wasm';
@@ -6,7 +7,9 @@ type ScannerViewProps = {
     onResult: (text: string) => void;
 };
 
-prepareWasm({ wasmUrl: `${wasmUrl}?_=${process.env.EPHEMON_BUILD_TIMESTAMP}` });
+prepareWasm({ wasmUrl: `${wasmUrl}?_=${process.env.EPHEMON_BUILD_TIMESTAMP}` }).catch((error) =>
+    getLogger().error('[scanner] Unable to initialize the zxing wasm reader.', error),
+);
 
 const ScannerView: React.FC<ScannerViewProps> = ({ onResult }) => {
     const [streaming, setStreaming] = useState(false);
@@ -18,7 +21,7 @@ const ScannerView: React.FC<ScannerViewProps> = ({ onResult }) => {
             const text = result.rawValue?.trim();
             if (text) onResult(text);
         },
-        onError: () => {},
+        onError: (error) => getLogger().error('[scanner] Unable to start the camera stream.', error),
     });
 
     return (
