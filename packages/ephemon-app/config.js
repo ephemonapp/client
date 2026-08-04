@@ -38,6 +38,17 @@ function getTemplateParameters(env) {
                 EPHEMON_APP_NAME: 'Ephemon',
             };
             break;
+        case 'next':
+            parameters = {
+                EPHEMON_CONSOLE_LOG_LEVEL: 'trace',
+                EPHEMON_DOCUMENT_LOG_LEVEL: 'info',
+                EPHEMON_SERVER_URL: 'https://s.ephemon.app',
+                EPHEMON_CLIENT_URL: 'https://next.ephemon.app',
+                EPHEMON_VAPID_KEY:
+                    'BHAYDRAjMWXfg7dxFIOZYNLlxrVDohy_PbN7SXcrXapiZq0Jnt0VXsAx6ytkLArVVFDSfula4VRWm5HDvkVVRbA',
+                EPHEMON_APP_NAME: 'Ephemon',
+            };
+            break;
     }
     parameters = {
         EPHEMON_BUILD_TIMESTAMP: Date.now(),

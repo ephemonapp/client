@@ -10,6 +10,7 @@
         "start": "npm run prerender -- --env environment=local && webpack serve --env environment=local",
         "build": "npm run prerender -- --env environment=local && webpack --env environment=local",
         "publish": "npm run prerender -- --env environment=production && webpack --env environment=production",
+        "publish:next": "npm run prerender -- --env environment=next && webpack --env environment=next",
         "publish:oss": "npm run prerender -- --env environment=oss && webpack --env environment=oss",
         "analyze": "npm run prerender && webpack --config webpack.analyze.config.js --env environment=local"
     },
