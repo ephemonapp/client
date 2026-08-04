@@ -1,6 +1,4 @@
 name: Deploy v2 to S3
-permissions:
-  contents: read
 
 on:
   workflow_dispatch:
@@ -10,8 +8,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-deploy:
+  deploy-next:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
       - name: Use Node.js
@@ -56,3 +56,140 @@ jobs:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           AWS_S3_ENDPOINT: ${{ secrets.AWS_S3_ENDPOINT }}
           SOURCE_DIR: packages/ephemon-app/dist
+
+  prerelease-oss:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          npm ci
+
+      - name: Use Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install the pinned wasm-bindgen CLI
+        run: cargo install wasm-bindgen-cli --version 0.2.100 --locked
+
+      - name: Build MLS WASM
+        run: npm run mls:build
+
+      - name: Resolve prerelease version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(node -p "require('./package.json').version")"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "root package.json version must be semver in format X.Y.Z, got: $version"
+            exit 1
+          fi
+
+          short_sha="$(git rev-parse --short=7 HEAD)"
+          # Prerelease identifier keeps this tag clear of the stable v<version>.<sha> that
+          # release-oss.yml cuts, so the same commit can be pretagged here and released there.
+          tag="v${version}-pre.${short_sha}"
+
+          tag_exists="false"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            tag_exists="true"
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "tag_exists=$tag_exists" >> "$GITHUB_OUTPUT"
+
+      - name: Build OSS bundle
+        run: |
+          set -euo pipefail
+          npm run publish:oss --workspace=@ephemon/app
+
+      - name: Generate coverage
+        run: |
+          set -euo pipefail
+          npm run coverage:generate
+
+      - name: Copy coverage into bundle
+        run: |
+          set -euo pipefail
+          npm run coverage:copy
+
+      - name: Build prerelease archive
+        id: archive
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          dist="packages/ephemon-app/dist"
+          archive="ephemon-client-oss-${{ steps.version.outputs.tag }}.zip"
+
+          # Zipped from inside the bundle, so it unpacks straight into a web root. Everything
+          # dist holds goes in, source maps and coverage report included.
+          ( cd "$dist" && zip -q -r "${GITHUB_WORKSPACE}/${archive}" . )
+
+          echo "path=${archive}" >> "$GITHUB_OUTPUT"
+
+      - name: Tag prerelease
+        if: steps.version.outputs.tag_exists != 'true'
+        run: |
+          set -euo pipefail
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Create GitHub prerelease
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          prerelease: true
+          generate_release_notes: true
+          files: ${{ steps.archive.outputs.path }}
+          body: |
+            Prerelease built from `${{ github.ref_name }}` at
+            `${{ steps.version.outputs.short_sha }}` — unreleased work in progress. For a bundle
+            to rely on take the latest release that is not marked as a prerelease.
+
+            Static bundle of the Ephemon client, built without a preset — it ships with no
+            server, push key or ICE list of its own.
+
+            Unpack it into a web root and serve it from the domain root; every path inside is
+            root-relative.
+
+            ```
+            unzip ephemon-client-oss-${{ steps.version.outputs.tag }}.zip -d /var/www/ephemon
+            ```
+
+            Serve a config document at `/config.json` next to the bundle and a fresh device
+            picks it up on first load and opens straight at the unlock form, no setup screen:
+
+            ```json
+            {
+              "serverUrl": "https://ephemon.example.com",
+              "vapidKey": "B…",
+              "iceServers": [
+                { "urls": "stun:coturn.example.com:3478" },
+                { "urls": "turn:coturn.example.com:3478", "username": "…", "credential": "…" }
+              ]
+            }
+            ```
+
+            Without it the app opens on the setup screen and asks for the same document by hand.
+            Settings already saved on a device always win over `/config.json`, so re-provisioning
+            a host never moves a device someone pointed elsewhere.

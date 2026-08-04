@@ -93,8 +93,6 @@ jobs:
           dist="packages/ephemon-app/dist"
           archive="ephemon-client-oss-${{ steps.version.outputs.tag }}.zip"
 
-          # Zipped from inside the bundle, so it unpacks straight into a web root. Everything
-          # dist holds goes in, source maps and coverage report included.
           ( cd "$dist" && zip -q -r "${GITHUB_WORKSPACE}/${archive}" . )
 
           echo "path=${archive}" >> "$GITHUB_OUTPUT"
