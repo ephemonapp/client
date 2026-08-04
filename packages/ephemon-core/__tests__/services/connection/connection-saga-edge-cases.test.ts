@@ -113,7 +113,7 @@ describe('ConnectionSaga (Edge Cases)', () => {
         expect(mockPeerConnection.setRemoteDescription).not.toHaveBeenCalled();
     }, 10000);
 
-    it('should not send empty outgoing messages and log debug', () => {
+    it('should reject text at the binary transport boundary', () => {
         const mockDataChannel = { send: vi.fn() };
         const mockWebRTC = createMockWebRTC();
 
@@ -135,11 +135,8 @@ describe('ConnectionSaga (Edge Cases)', () => {
         saga.getSharedSymmetricKey = () => new Uint8Array([1, 2, 3]);
         saga.getRtcSendDataChannel = () => mockDataChannel;
 
-        saga.send('');
-        expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining('Message is empty'));
-        expect(mockDataChannel.send).not.toHaveBeenCalled();
-
-        saga.send('   ');
+        saga.send('legacy text');
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('Error sending data'));
         expect(mockDataChannel.send).not.toHaveBeenCalled();
     });
 
@@ -362,13 +359,13 @@ describe('ConnectionSaga (Edge Cases)', () => {
         stateTransitions.push(ConnectionSagaState.AwaitingConnection);
         mockDataChannel.onopen();
         mockDataChannel.onmessage({ data: 'not-an-array-buffer' });
-        let received: string | undefined;
-        saga.onMessage = (msg: string) => {
+        let received: Uint8Array | undefined;
+        saga.onMessage = (msg: Uint8Array) => {
             received = msg;
         };
         mockDataChannel.onmessage({ data: new ArrayBuffer(10) });
-        saga.send('  ');
-        saga.send('test message');
+        saga.send(new Uint8Array());
+        saga.send(new Uint8Array([0, 1, 255]));
         await openPromise;
         expect(stateTransitions).toContain(ConnectionSagaState.Connected);
         expect(saga.state).toBe(ConnectionSagaState.Connected);

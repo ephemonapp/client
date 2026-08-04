@@ -1,0 +1,6 @@
+{"a":"update","b":{"a":"test-public-key","b":{"a":"test-endpoint","b":9999999,"c":{"a":"test-p256dh","b":"test-auth"}}},"c":"test-signature"}
+{"a":"dial","b":{"a":"test-public-key","b":123456789,"c":"test-peer-public-key","d":"test-encryption-public-key"},"c":"test-signature"}
+{"a":"offer","b":{"a":"test-public-key","b":123456789,"c":"test-peer-public-key","d":"test-encryption-public-key","e":"AQIDBA=="},"c":"test-signature"}
+{"a":"answer","b":{"a":"test-public-key","b":123456789,"c":"test-peer-public-key","d":"test-encryption-public-key","e":"AQIDBA=="},"c":"test-signature"}
+{"a":"ice","b":{"a":"test-public-key","b":123456789,"c":"test-peer-public-key","d":"test-encryption-public-key","e":"AQIDBA==","f":1},"c":"test-signature"}
+{"a":"close","b":{"a":"test-public-key","b":123456789,"c":"test-peer-public-key"},"c":"test-signature"}

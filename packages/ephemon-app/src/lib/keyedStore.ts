@@ -1,16 +1,19 @@
-export type KeyedStore<T> = {
-    subscribe(key: string, listener: () => void): () => void;
-    get(key: string): T;
-    set(key: string, value: T): void;
-    update(key: string, updater: (previous: T) => T): void;
-    remove(key: string): void;
+export type KeyedStore<T, Key extends string | number = string> = {
+    subscribe(key: Key, listener: () => void): () => void;
+    get(key: Key): T;
+    set(key: Key, value: T): void;
+    update(key: Key, updater: (previous: T) => T): void;
+    remove(key: Key): void;
 };
 
-export function createKeyedStore<T>(fallback: T, equals: (a: T, b: T) => boolean = Object.is): KeyedStore<T> {
-    const values = new Map<string, T>();
-    const listeners = new Map<string, Set<() => void>>();
+export function createKeyedStore<T, Key extends string | number = string>(
+    fallback: T,
+    equals: (a: T, b: T) => boolean = Object.is,
+): KeyedStore<T, Key> {
+    const values = new Map<Key, T>();
+    const listeners = new Map<Key, Set<() => void>>();
 
-    function notify(key: string): void {
+    function notify(key: Key): void {
         const subscribers = listeners.get(key);
         if (subscribers === undefined) return;
         for (const listener of subscribers) {

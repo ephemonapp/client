@@ -4,6 +4,7 @@ import { messageKey } from '../../../lib/chatStore';
 import { setConnectionNotice, setConnectionProgress, useActiveConversation } from '../../../lib/connectionStore';
 import { displayName } from '../../../lib/identicon';
 import { ChatWindowMessageType } from '../../../types/chatMessageType';
+import { ConversationId } from '../../../types/conversation';
 import ChatHeader from './ChatHeader';
 import Composer, { ComposerHandle } from './Composer';
 import ConnectingSlot from './ConnectingSlot';
@@ -13,7 +14,7 @@ import ReplySlot from './ReplySlot';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 type ChatPaneProps = {
-    id: number;
+    id: ConversationId;
     columnVisible: boolean;
     isMobile: boolean;
     name: string | undefined;
@@ -21,8 +22,8 @@ type ChatPaneProps = {
     callbacks: ConnectionCallbacks;
     onBack: () => void;
     onOpenPeerQr: (publicKey: string, name: string | undefined) => void;
-    onOpenRename: (id: number, current: string) => void;
-    onDelete: (id: number) => void;
+    onOpenRename: (id: ConversationId, current: string) => void;
+    onDelete: (id: ConversationId) => void;
 };
 
 const MENU_W = 236;
@@ -41,12 +42,12 @@ const ChatPane: React.FC<ChatPaneProps> = ({
     onDelete,
 }) => {
     const onScreen = useActiveConversation() === id && columnVisible;
-    const chat = useChat({ publicKey, callbacks });
+    const chat = useChat({ conversationId: id, callbacks });
     const [anchor, setAnchor] = useState<ReactionAnchor | null>(null);
 
     useEffect(() => {
-        callbacks.events.setOnProgress((progress) => setConnectionProgress(publicKey, progress));
-    }, [callbacks, publicKey]);
+        callbacks.events.setOnProgress((progress) => setConnectionProgress(id, progress));
+    }, [callbacks, id]);
 
     const onSeen = useCallback((messageId: number) => void chat.send.seen(messageId).catch(() => {}), [chat.send]);
 
@@ -114,9 +115,9 @@ const ChatPane: React.FC<ChatPaneProps> = ({
     const onTyping = useCallback(() => void chat.send.action('typing').catch(() => {}), [chat.send]);
 
     const onReconnect = useCallback(() => {
-        setConnectionNotice(publicKey, undefined);
+        setConnectionNotice(id, undefined);
         void callbacks.lifecycle.open().catch(() => {});
-    }, [callbacks, publicKey]);
+    }, [callbacks, id]);
     const onClear = useCallback(() => void chat.clear().catch(() => {}), [chat]);
     const onShowPeerQr = useCallback(() => onOpenPeerQr(publicKey, name), [onOpenPeerQr, publicKey, name]);
     const onRename = useCallback(
@@ -130,6 +131,7 @@ const ChatPane: React.FC<ChatPaneProps> = ({
     return (
         <div className='chat'>
             <ChatHeader
+                conversationId={id}
                 name={name}
                 publicKey={publicKey}
                 isMobile={isMobile}
@@ -151,7 +153,7 @@ const ChatPane: React.FC<ChatPaneProps> = ({
             />
             <div className='chat__footer'>
                 <ConnectingSlot
-                    publicKey={publicKey}
+                    conversationId={id}
                     name={displayName(name, publicKey)}
                     onRetry={onReconnect}
                 />

@@ -1,10 +1,12 @@
 import { useConnectionStatus } from '../../../lib/connectionStore';
 import { displayName, hashColor, initials } from '../../../lib/identicon';
 import { connStatus } from '../../../lib/status';
+import { ConversationId } from '../../../types/conversation';
 import { BackIcon, KebabIcon, PencilIcon, QrIcon, RefreshIcon, TrashIcon, CloseIcon } from '../../icons';
 import React, { useCallback, useState } from 'react';
 
 type ChatHeaderProps = {
+    conversationId: ConversationId;
     name: string | undefined;
     publicKey: string;
     isMobile: boolean;
@@ -17,6 +19,7 @@ type ChatHeaderProps = {
 };
 
 const ChatHeader: React.FC<ChatHeaderProps> = ({
+    conversationId,
     name,
     publicKey,
     isMobile,
@@ -27,7 +30,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
     onClear,
     onDelete,
 }) => {
-    const { state, transport, notice } = useConnectionStatus(publicKey);
+    const { state, transport, notice } = useConnectionStatus(conversationId);
     const { text, color } = connStatus(state, transport, notice);
     const [kebabOpen, setKebabOpen] = useState(false);
 

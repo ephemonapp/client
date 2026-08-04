@@ -4,7 +4,7 @@ import { committed, readAll, toPromise } from './idb';
 import { Logger } from './logger';
 import { hasLegacyVault, migrations, verifyLegacyPassword } from './migrations';
 import { ensureMigrationStore, pendingMigrations, runDataPhase, runSchemaPhase } from './migrator';
-import { REQUIRED_STORES, STORE_MESSAGES, STORE_META } from './stores';
+import { REQUIRED_STORES, STORE_MESSAGES, STORE_META, STORE_MLS_CHECKPOINTS } from './stores';
 
 export type DatabaseConfig = {
     dbName: string;
@@ -25,6 +25,8 @@ export class VaultBlockedError extends Error {}
 
 export class VaultStaleError extends Error {}
 
+export class MlsCheckpointConflictError extends Error {}
+
 const META_ID = 'vault';
 
 type MetaRecord = {
@@ -44,6 +46,24 @@ type MessageRow = {
     n: number;
     iv: Bytes;
     data: ArrayBuffer;
+};
+
+type MlsCheckpointRow = EncryptedRow & {
+    id: number;
+    revision: number;
+};
+
+type MlsCheckpointEnvelope = {
+    id: number;
+    revision: number;
+    checkpoint: Array<number>;
+    companion?: Array<number>;
+};
+
+export type StoredMlsCheckpoint = {
+    revision: number;
+    checkpoint: Uint8Array<ArrayBuffer>;
+    companion?: Uint8Array<ArrayBuffer>;
 };
 
 export interface Database {
@@ -76,6 +96,17 @@ export interface Database {
     ): Promise<void>;
 
     clearMessages(chatId: number): Promise<void>;
+
+    getMlsCheckpoint(conversationId: number): Promise<StoredMlsCheckpoint | null>;
+
+    putMlsCheckpoint(
+        conversationId: number,
+        expectedRevision: number | null,
+        checkpoint: Uint8Array,
+        companion?: Uint8Array,
+    ): Promise<number>;
+
+    deleteMlsCheckpoint(conversationId: number): Promise<void>;
 }
 
 function messageRowKey(message: ChatWindowMessageType): string {
@@ -155,7 +186,8 @@ export default function getDatabase(logger: Logger, cryptography: Cryptography):
         }
 
         const missing = REQUIRED_STORES.filter((store) => !opened.objectStoreNames.contains(store));
-        if (missing.length > 0) {
+        const canMigrateMissingStores = missing.length > 0 && (await pendingMigrations(opened, migrations)).length > 0;
+        if (missing.length > 0 && !canMigrateMissingStores) {
             opened.close();
             throw new VaultStaleError(`This tab is older than the stored vault (missing ${missing.join(', ')}).`);
         }
@@ -466,6 +498,79 @@ export default function getDatabase(logger: Logger, cryptography: Cryptography):
             transaction.objectStore(STORE_MESSAGES).delete(chatRange(chatId));
             await committed(transaction);
             messageIndexes.delete(chatId);
+        },
+
+        async getMlsCheckpoint(conversationId: number): Promise<StoredMlsCheckpoint | null> {
+            const database = await open();
+            const key = requireKey();
+            const transaction = database.transaction([STORE_MLS_CHECKPOINTS], 'readonly');
+            const row = await toPromise<MlsCheckpointRow | undefined>(
+                transaction.objectStore(STORE_MLS_CHECKPOINTS).get(conversationId),
+            );
+            if (row === undefined) return null;
+            const envelope = await cryptography.decrypt<MlsCheckpointEnvelope>(key, {
+                iv: row.iv,
+                data: row.data,
+            });
+            if (envelope.id !== conversationId || envelope.revision !== row.revision) {
+                throw new Error(`[database] MLS checkpoint '${conversationId}' carries mismatched metadata.`);
+            }
+            return {
+                revision: row.revision,
+                checkpoint: Uint8Array.from(envelope.checkpoint),
+                companion: envelope.companion === undefined ? undefined : Uint8Array.from(envelope.companion),
+            };
+        },
+
+        async putMlsCheckpoint(
+            conversationId: number,
+            expectedRevision: number | null,
+            checkpoint: Uint8Array,
+            companion?: Uint8Array,
+        ): Promise<number> {
+            const database = await open();
+            const revision = (expectedRevision ?? 0) + 1;
+            const key = requireKey();
+            const { iv, data } = await cryptography.encrypt(key, {
+                id: conversationId,
+                revision,
+                checkpoint: Array.from(checkpoint),
+                companion: companion === undefined ? undefined : Array.from(companion),
+            } satisfies MlsCheckpointEnvelope);
+
+            await new Promise<void>((resolve, reject) => {
+                const transaction = database.transaction([STORE_MLS_CHECKPOINTS], 'readwrite');
+                const store = transaction.objectStore(STORE_MLS_CHECKPOINTS);
+                let conflict = false;
+                const request = store.get(conversationId);
+                request.onsuccess = () => {
+                    const current = request.result as MlsCheckpointRow | undefined;
+                    if ((current?.revision ?? null) !== expectedRevision) {
+                        conflict = true;
+                        transaction.abort();
+                        return;
+                    }
+                    store.put({ id: conversationId, revision, iv, data } satisfies MlsCheckpointRow);
+                };
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = () => reject(transaction.error);
+                transaction.onabort = () =>
+                    reject(
+                        conflict
+                            ? new MlsCheckpointConflictError(
+                                  `MLS checkpoint '${conversationId}' changed in another writer.`,
+                              )
+                            : transaction.error,
+                    );
+            });
+            return revision;
+        },
+
+        async deleteMlsCheckpoint(conversationId: number): Promise<void> {
+            const database = await open();
+            const transaction = database.transaction([STORE_MLS_CHECKPOINTS], 'readwrite');
+            transaction.objectStore(STORE_MLS_CHECKPOINTS).delete(conversationId);
+            await committed(transaction);
         },
     };
 }

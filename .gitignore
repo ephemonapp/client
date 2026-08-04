@@ -8,5 +8,6 @@
 !.github/badges/coverage/
 !.github/badges/coverage/**
 **/node_modules
+/target/
 .DS_Store
 **/.prerender

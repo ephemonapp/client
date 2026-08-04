@@ -336,7 +336,7 @@ describe('ConnectionSaga (Error Handling and Cleanup)', () => {
         setState(ConnectionSagaState.AwaitingAnswer);
 
         try {
-            saga.send('test message with error');
+            saga.send(new Uint8Array([1, 2, 3]));
         } catch (error) {}
 
         try {
@@ -385,7 +385,7 @@ describe('ConnectionSaga (Error Handling and Cleanup)', () => {
         patchedSaga.getSharedSymmetricKey = () => new Uint8Array([1, 2, 3]);
         patchedSaga.getRtcSendDataChannel = () => mockBrokenDataChannel;
 
-        patchedSaga.send('test message');
+        patchedSaga.send(new Uint8Array([1, 2, 3]));
 
         expect(errorSpy).toHaveBeenCalled();
 
@@ -425,11 +425,11 @@ describe('ConnectionSaga (Error Handling and Cleanup)', () => {
 
         errorSpy.mockClear();
 
-        saga.send('test message');
+        saga.send(new Uint8Array([1, 2, 3]));
 
         expect(errorSpy).toHaveBeenCalled();
 
-        expect(mockDataChannel.send).toHaveBeenCalledWith('test message');
+        expect(mockDataChannel.send).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]));
 
         errorSpy.mockRestore();
     });
@@ -541,7 +541,7 @@ describe('ConnectionSaga (Error Handling and Cleanup)', () => {
         );
 
         try {
-            saga.send('test message');
+            saga.send(new Uint8Array([1, 2, 3]));
             expect('No error thrown').toBe('Expected an error to be thrown');
         } catch (error) {
             expect(mockLogger.error).toHaveBeenCalled();
@@ -684,7 +684,7 @@ describe('ConnectionSaga (Error Handling and Cleanup)', () => {
             try {
                 await new Promise<void>((resolve) => {
                     if (saga.onMessage) {
-                        saga.onMessage('test message');
+                        saga.onMessage(new Uint8Array([1, 2, 3]));
                     }
                     resolve();
                 });
@@ -799,7 +799,7 @@ describe('ConnectionSaga (Error Handling and Cleanup)', () => {
 
         saga.setEncryption('mock-encryption-public-key');
 
-        saga.send('test message');
+        saga.send(new Uint8Array([1, 2, 3]));
 
         expect(mockLogger.error).toHaveBeenCalledWith(
             expect.stringContaining('Error sending data in outgoing connection with mock-remote-public-key'),

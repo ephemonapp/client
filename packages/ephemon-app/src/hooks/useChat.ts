@@ -3,6 +3,7 @@ import { setUnreadCount } from '../lib/connectionStore';
 import { buildReplay, flipReplyTo } from '../lib/replay';
 import { ActionType } from '../types/actionType';
 import { ChatWindowMessageType } from '../types/chatMessageType';
+import { ConversationId } from '../types/conversation';
 import { DeliveredType } from '../types/deliveredType';
 import { MessageType } from '../types/messageType';
 import { ReactionType } from '../types/reactionType';
@@ -29,13 +30,14 @@ export type ChatHook = {
 };
 
 type ChatHookProps = {
-    publicKey: string;
+    conversationId: ConversationId;
     callbacks: ConnectionCallbacks;
 };
 
 const TYPING_TIMEOUT = 5 * 1000;
+const TYPING_SEND_INTERVAL = 2 * 1000;
 
-export function useChat({ publicKey, callbacks }: ChatHookProps): ChatHook {
+export function useChat({ conversationId, callbacks }: ChatHookProps): ChatHook {
     const {
         view: { setOrder },
         messaging: {
@@ -45,11 +47,13 @@ export function useChat({ publicKey, callbacks }: ChatHookProps): ChatHook {
         events: { setOnStateChanged, setOnMessage },
     } = callbacks;
 
-    const store = useMemo(() => getChatStore(publicKey), [publicKey]);
+    const store = useMemo(() => getChatStore(conversationId), [conversationId]);
 
     const notifiedRef = useRef<Set<number>>(new Set());
     const hasBeenOpenedRef = useRef(false);
     const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const lastTypingSentAtRef = useRef(Number.NEGATIVE_INFINITY);
+    const typingSendPendingRef = useRef(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -71,13 +75,13 @@ export function useChat({ publicKey, callbacks }: ChatHookProps): ChatHook {
         const recount = () => {
             const messages = store.getMessages();
             setUnreadCount(
-                publicKey,
+                conversationId,
                 messages.filter((message) => message.sender === 'peer' && message.seen === undefined).length,
             );
         };
         recount();
         return store.subscribeAny(recount);
-    }, [store, publicKey]);
+    }, [store, conversationId]);
 
     useEffect(() => {
         const dirty = new Map<MessageKey, 'upsert' | 'delete'>();
@@ -164,15 +168,23 @@ export function useChat({ publicKey, callbacks }: ChatHookProps): ChatHook {
     );
 
     const sendUpdate = useCallback(
-        async (update: UpdateType) => {
-            sendMessage(JSON.stringify(update));
+        async (update: UpdateType, options?: { ephemeral?: boolean }) => {
+            await sendMessage(JSON.stringify(update), options);
         },
         [sendMessage],
     );
 
     const sendAction = useCallback(
         async (action: ActionType) => {
-            await sendUpdate({ id: serverTime(), action });
+            const at = Date.now();
+            if (typingSendPendingRef.current || at - lastTypingSentAtRef.current < TYPING_SEND_INTERVAL) return;
+            typingSendPendingRef.current = true;
+            lastTypingSentAtRef.current = at;
+            try {
+                await sendUpdate({ id: serverTime(), action }, { ephemeral: true });
+            } finally {
+                typingSendPendingRef.current = false;
+            }
         },
         [sendUpdate],
     );
@@ -301,9 +313,7 @@ export function useChat({ publicKey, callbacks }: ChatHookProps): ChatHook {
             if (update.seen != null) setMessageSeen(update.id, update.seen, 'you');
             if (update.reaction != null) setMessageReaction(update.id, 'you', update.reaction);
             if (update.history != null) {
-                for (const historical of update.history) {
-                    onUpdate(historical);
-                }
+                for (const historical of update.history) onUpdate(historical);
             }
         },
         [

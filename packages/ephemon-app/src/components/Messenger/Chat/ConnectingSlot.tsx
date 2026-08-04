@@ -1,19 +1,20 @@
 import { useConnectionNotice, useConnectionProgress, useConnectionStatus } from '../../../lib/connectionStore';
 import { noticeText } from '../../../lib/notice';
+import { ConversationId } from '../../../types/conversation';
 import ConnectingBanner from './ConnectingBanner';
 import FailureBanner from './FailureBanner';
 import React from 'react';
 
 type ConnectingSlotProps = {
-    publicKey: string;
+    conversationId: ConversationId;
     name: string;
     onRetry: () => void;
 };
 
-const ConnectingSlot: React.FC<ConnectingSlotProps> = ({ publicKey, name, onRetry }) => {
-    const { state } = useConnectionStatus(publicKey);
-    const notice = useConnectionNotice(publicKey);
-    const progress = useConnectionProgress(publicKey);
+const ConnectingSlot: React.FC<ConnectingSlotProps> = ({ conversationId, name, onRetry }) => {
+    const { state } = useConnectionStatus(conversationId);
+    const notice = useConnectionNotice(conversationId);
+    const progress = useConnectionProgress(conversationId);
 
     if (notice !== undefined && state !== 'open' && state !== 'degraded') {
         return (

@@ -35,6 +35,7 @@ const mockSagaSend = vi.fn();
 const mockSagaSetEncryption = vi.fn();
 const mockSagaSetDescription = vi.fn().mockResolvedValue(undefined);
 const mockSagaAddIceCandidate = vi.fn().mockResolvedValue(undefined);
+const binaryMessage = new Uint8Array([0, 1, 255]);
 
 vi.mock('../../../src/services/connection/connection-saga', async (importOriginal) => {
     const originalModule = await importOriginal<typeof import('../../../src/services/connection/connection-saga')>();
@@ -526,8 +527,8 @@ describe('Connection Tests', () => {
                 TEST_PRIME_SERVER_URL,
             );
 
-            connection.send('test message');
-            expect(mockSagaSend).toHaveBeenCalledWith('test message');
+            connection.send(binaryMessage);
+            expect(mockSagaSend).toHaveBeenCalledWith(binaryMessage);
         });
 
         it('should correctly handle incomingState and outgoingState', () => {
@@ -582,7 +583,7 @@ describe('Connection Tests', () => {
             );
 
             expect(() => {
-                connection.send('test message');
+                connection.send(binaryMessage);
             }).toThrow('[connection] Connection is not ready yet.');
 
             expect(mockSagaSend).not.toHaveBeenCalled();
@@ -609,9 +610,9 @@ describe('Connection Tests', () => {
 
             sagas[1].value.state = ConnectionSagaState.Connected;
 
-            connection.send('test message');
+            connection.send(binaryMessage);
 
-            expect(mockSagaSend).toHaveBeenCalledWith('test message');
+            expect(mockSagaSend).toHaveBeenCalledWith(binaryMessage);
         });
     });
 
@@ -855,13 +856,15 @@ describe('Connection Tests', () => {
             const incomingSaga = mockGetConnectionSaga.mock.results[0].value;
             const outgoingSaga = mockGetConnectionSaga.mock.results[1].value;
 
-            incomingSaga.onMessage('test message from incoming');
+            const incomingMessage = new Uint8Array([1]);
+            incomingSaga.onMessage(incomingMessage);
 
-            outgoingSaga.onMessage('test message from outgoing');
+            const outgoingMessage = new Uint8Array([2]);
+            outgoingSaga.onMessage(outgoingMessage);
 
             expect(onMessageMock).toHaveBeenCalledTimes(2);
-            expect(onMessageMock).toHaveBeenCalledWith('test message from incoming');
-            expect(onMessageMock).toHaveBeenCalledWith('test message from outgoing');
+            expect(onMessageMock).toHaveBeenCalledWith(incomingMessage);
+            expect(onMessageMock).toHaveBeenCalledWith(outgoingMessage);
         });
 
         it('should handle errors in callbacks gracefully', () => {
@@ -918,7 +921,7 @@ describe('Connection Tests', () => {
 
             errorThrown = false;
             try {
-                mockSaga.onMessage('test message');
+                mockSaga.onMessage(binaryMessage);
             } catch (e) {
                 errorThrown = true;
             }
@@ -1507,8 +1510,8 @@ describe('Connection Tests', () => {
             connect(sagas.incoming);
             connect(sagas.outgoing);
 
-            connection.send('test message');
-            expect(sagas.incoming.send).toHaveBeenCalledWith('test message');
+            connection.send(binaryMessage);
+            expect(sagas.incoming.send).toHaveBeenCalledWith(binaryMessage);
             expect(sagas.outgoing.send).not.toHaveBeenCalled();
             expect(connection.transport).toBe('incoming');
         });
@@ -1520,8 +1523,8 @@ describe('Connection Tests', () => {
             connect(sagas.outgoing);
             connect(sagas.incoming);
 
-            connection.send('test message');
-            expect(sagas.outgoing.send).toHaveBeenCalledWith('test message');
+            connection.send(binaryMessage);
+            expect(sagas.outgoing.send).toHaveBeenCalledWith(binaryMessage);
             expect(sagas.incoming.send).not.toHaveBeenCalled();
             expect(connection.transport).toBe('outgoing');
         });
@@ -1534,8 +1537,8 @@ describe('Connection Tests', () => {
             connect(sagas.incoming);
             connect(sagas.outgoing);
 
-            connection.send('test message');
-            expect(sagas.incoming.send).toHaveBeenCalledWith('test message');
+            connection.send(binaryMessage);
+            expect(sagas.incoming.send).toHaveBeenCalledWith(binaryMessage);
             expect(sagas.outgoing.send).not.toHaveBeenCalled();
         });
 
@@ -1548,8 +1551,8 @@ describe('Connection Tests', () => {
 
             sagas.incoming.state = ConnectionSagaState.New;
 
-            connection.send('test message');
-            expect(sagas.outgoing.send).toHaveBeenCalledWith('test message');
+            connection.send(binaryMessage);
+            expect(sagas.outgoing.send).toHaveBeenCalledWith(binaryMessage);
             expect(sagas.incoming.send).not.toHaveBeenCalled();
             expect(connection.transport).toBe('outgoing');
         });
@@ -1561,8 +1564,8 @@ describe('Connection Tests', () => {
             sagas.incoming.state = ConnectionSagaState.Connected;
             sagas.outgoing.state = ConnectionSagaState.Connected;
 
-            connection.send('test message');
-            expect(sagas.incoming.send).toHaveBeenCalledWith('test message');
+            connection.send(binaryMessage);
+            expect(sagas.incoming.send).toHaveBeenCalledWith(binaryMessage);
             expect(sagas.outgoing.send).not.toHaveBeenCalled();
         });
     });
@@ -1641,8 +1644,8 @@ describe('Connection Tests', () => {
 
             const translatedConnected = translateConnection(connectedConnection);
 
-            translatedConnected.send('test message');
-            expect(mockSagaSend).toHaveBeenCalledWith('test message');
+            translatedConnected.send(binaryMessage);
+            expect(mockSagaSend).toHaveBeenCalledWith(binaryMessage);
 
             translatedConnected.close();
             expect(mockCallService.close).toHaveBeenCalledWith(

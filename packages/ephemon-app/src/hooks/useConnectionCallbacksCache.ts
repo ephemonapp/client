@@ -1,4 +1,5 @@
 import { ChatWindowMessageType } from '../types/chatMessageType';
+import { ConversationId } from '../types/conversation';
 import { ConnectionState } from '@ephemon/core';
 import { useCallback, useRef } from 'react';
 
@@ -10,7 +11,7 @@ export type ConnectionCallbacks = {
         setOrder: (value: number) => void;
     };
     messaging: {
-        send: (message: string) => void;
+        send: (message: string, options?: { ephemeral?: boolean }) => Promise<void>;
         history: {
             get: () => Promise<Array<ChatWindowMessageType>>;
             save: (upserts: ReadonlyArray<ChatWindowMessageType>, deletes: ReadonlyArray<string>) => Promise<void>;
@@ -26,33 +27,38 @@ export type ConnectionCallbacks = {
 
 export type ConnectionCallbacksById = {
     lifecycle: {
-        open: (id: number) => Promise<void>;
+        open: (id: ConversationId) => Promise<void>;
     };
     view: {
-        setOrder: (id: number, value: number) => void;
+        setOrder: (id: ConversationId, value: number) => void;
     };
     messaging: {
-        send: (id: number, message: string) => void;
+        send: (id: ConversationId, message: string, options?: { ephemeral?: boolean }) => Promise<void>;
         history: {
-            get: (id: number) => Promise<Array<ChatWindowMessageType>>;
+            get: (id: ConversationId) => Promise<Array<ChatWindowMessageType>>;
             save: (
-                id: number,
+                id: ConversationId,
                 upserts: ReadonlyArray<ChatWindowMessageType>,
                 deletes: ReadonlyArray<string>,
             ) => Promise<void>;
-            clear: (id: number) => Promise<void>;
+            clear: (id: ConversationId) => Promise<void>;
         };
     };
     events: {
-        setOnProgress: (id: number, onProgress: (progress: number) => void) => void;
-        setOnStateChanged: (id: number, onStateChanged: (from: ConnectionState, to: ConnectionState) => void) => void;
-        setOnMessage: (id: number, onMessage: (message: string) => void) => void;
+        setOnProgress: (id: ConversationId, onProgress: (progress: number) => void) => void;
+        setOnStateChanged: (
+            id: ConversationId,
+            onStateChanged: (from: ConnectionState, to: ConnectionState) => void,
+        ) => void;
+        setOnMessage: (id: ConversationId, onMessage: (message: string) => void) => void;
     };
 };
 
-export function useConnectionCallbacksCache(source: ConnectionCallbacksById): (id: number) => ConnectionCallbacks {
+export function useConnectionCallbacksCache(
+    source: ConnectionCallbacksById,
+): (id: ConversationId) => ConnectionCallbacks {
     const sourceRef = useRef(source);
-    const cacheRef = useRef<Map<number, ConnectionCallbacks>>(new Map());
+    const cacheRef = useRef<Map<ConversationId, ConnectionCallbacks>>(new Map());
 
     const previous = sourceRef.current;
     if (
@@ -70,7 +76,7 @@ export function useConnectionCallbacksCache(source: ConnectionCallbacksById): (i
         cacheRef.current = new Map();
     }
 
-    return useCallback((id: number): ConnectionCallbacks => {
+    return useCallback((id: ConversationId): ConnectionCallbacks => {
         const cached = cacheRef.current.get(id);
         if (cached !== undefined) return cached;
 
@@ -79,7 +85,7 @@ export function useConnectionCallbacksCache(source: ConnectionCallbacksById): (i
             lifecycle: { open: () => bound.lifecycle.open(id) },
             view: { setOrder: (value) => bound.view.setOrder(id, value) },
             messaging: {
-                send: (message) => bound.messaging.send(id, message),
+                send: (message, options) => bound.messaging.send(id, message, options),
                 history: {
                     get: () => bound.messaging.history.get(id),
                     save: (upserts, deletes) => bound.messaging.history.save(id, upserts, deletes),

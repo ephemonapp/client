@@ -1,4 +1,5 @@
 import { ChatWindowMessageType } from '../types/chatMessageType';
+import { ConversationId } from '../types/conversation';
 import { ReplyToMessageType } from '../types/replyToMessageType';
 import { now, serverTime } from '../utils/functions';
 import { fmtDay } from './time';
@@ -328,19 +329,19 @@ function createChatStore(): ChatStore {
     };
 }
 
-const stores = new Map<string, ChatStore>();
+const stores = new Map<ConversationId, ChatStore>();
 
-export function getChatStore(publicKey: string): ChatStore {
-    let store = stores.get(publicKey);
+export function getChatStore(conversationId: ConversationId): ChatStore {
+    let store = stores.get(conversationId);
     if (store === undefined) {
         store = createChatStore();
-        stores.set(publicKey, store);
+        stores.set(conversationId, store);
     }
     return store;
 }
 
-export function disposeChatStore(publicKey: string): void {
-    stores.delete(publicKey);
+export function disposeChatStore(conversationId: ConversationId): void {
+    stores.delete(conversationId);
 }
 
 export function useMessageKeys(store: ChatStore): ReadonlyArray<MessageKey> {

@@ -33,6 +33,17 @@ jobs:
           set -euo pipefail
           npm ci
 
+      - name: Use Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install the pinned wasm-bindgen CLI
+        run: cargo install wasm-bindgen-cli --version 0.2.100 --locked
+
+      - name: Build MLS WASM
+        run: npm run mls:build
+
       - name: Resolve release version
         id: version
         shell: bash

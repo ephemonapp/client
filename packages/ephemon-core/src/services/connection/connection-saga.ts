@@ -10,7 +10,6 @@ import { TimeService } from '../time-service';
 import { classifyCallError, ConnectionError } from './connection-error';
 import { IceServer } from './ice-server';
 import { WebRTC } from './web-rtc';
-import { gzip, ungzip } from 'pako';
 
 export enum ConnectionSagaState {
     New = 0,
@@ -44,7 +43,7 @@ export type ConnectionSagaTransport = 'direct' | 'relay';
 
 export interface ConnectionSaga {
     onStateChanged?: (from: ConnectionSagaState, to: ConnectionSagaState) => void;
-    onMessage?: (message: string) => void;
+    onMessage?: (message: Uint8Array) => void;
     onTransportChanged?: (transport: ConnectionSagaTransport) => void;
     onPeerServerUrl?: (serverUrl: string) => void;
     onFailed?: (error: ConnectionError) => void;
@@ -70,7 +69,7 @@ export interface ConnectionSaga {
 
     addIceCandidate(encryptedDataBase64: string): Promise<void>;
 
-    send(message: string): void;
+    send(message: Uint8Array): void;
 }
 
 interface WebRtcDescription {
@@ -461,6 +460,7 @@ export function getConnectionSaga(
 
     function initializeDataChanel(dataChannel: RTCDataChannel, suffix: string): () => void {
         logger.debug(`[connection-saga] [${dataChannel.id}] DataChannel-${suffix}(${dataChannel.label}) created`);
+        dataChannel.binaryType = 'arraybuffer';
         dataChannel.onopen = async () => {
             if (state === ConnectionSagaState.Closed) {
                 dataChannel.close();
@@ -482,22 +482,20 @@ export function getConnectionSaga(
             );
         };
         dataChannel.onmessage = (event) => {
-            if (!(event.data instanceof ArrayBuffer)) {
+            let dataBytes: Uint8Array;
+            if (event.data instanceof ArrayBuffer) {
+                dataBytes = new Uint8Array(event.data.slice(0));
+            } else if (ArrayBuffer.isView(event.data)) {
+                const view = event.data;
+                dataBytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice();
+            } else {
                 logger.warn(
                     `[connection-saga] Wrong message type received via ${suffix} dataChannel with label '${dataChannel.label}' in ${type} connection with ${publicKey}.`,
                 );
                 return;
             }
-            const dataBytes = new Uint8Array(event.data);
             const decryptedBytes = cryptography.decrypt(dataBytes, getSharedSymmetricKey());
-            let inflatedBytes: Uint8Array;
-            try {
-                inflatedBytes = ungzip(decryptedBytes);
-            } catch (err) {
-                logger.warn(`[connection-saga] Gzip decompression failed, using raw decrypted data.`, err);
-                inflatedBytes = decryptedBytes;
-            }
-            const message = utf8.encode(inflatedBytes);
+            const message = decryptedBytes.slice();
             new Promise<void>((resolve) => {
                 saga.onMessage?.call(saga, message);
                 resolve();
@@ -788,19 +786,11 @@ export function getConnectionSaga(
                 `[connection-saga] Added remote WebRTC ice candidate in ${type} connection with ${publicKey}.`,
             );
         },
-        send(message: string): void {
+        send(message: Uint8Array): void {
             try {
-                const data = message.trim();
-                if (!data) {
-                    logger.debug(
-                        `[connection-saga] Message is empty and won't be sent in ${type} connection with ${publicKey}.`,
-                    );
-                    return;
-                }
-                const dataBytes = utf8.decode(data);
-                const compressedBytes = gzip(dataBytes);
-                const dataEncrypted = cryptography.encrypt(compressedBytes, getSharedSymmetricKey());
-                getRtcSendDataChannel().send(new Uint8Array(dataEncrypted.buffer as ArrayBuffer));
+                if (!(message instanceof Uint8Array)) throw new TypeError('Connection data must be a Uint8Array.');
+                const dataEncrypted = cryptography.encrypt(message.slice(), getSharedSymmetricKey());
+                getRtcSendDataChannel().send(dataEncrypted.slice());
             } catch (error) {
                 logger.error(`[connection-saga] Error sending data in ${type} connection with ${publicKey}.`);
             }

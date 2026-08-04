@@ -28,6 +28,7 @@ import { trackServerSync, UNSTABLE_AFTER } from '../lib/netStatusStore';
 import '../styles.css';
 import { ThemeProvider } from '../theme/ThemeProvider';
 import { ChatWindowMessageType } from '../types/chatMessageType';
+import { toConversationId } from '../types/conversation';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 
@@ -36,24 +37,27 @@ const MY_CONTACT = 'k8FjZ0rQvN2pXwTy7bLm9cAeR4sD1gHuJ6iOoP3aQwEBd2hpc3Blci1zcnYu
 const ALEX_CONTACT = 'a1B2c3D4e5F6g7H8i9J0kLmNoPqRsTuVwXyZ0123454Bd2hpc3Blci5hbGV4LXJpdmVyYS5leGFtcGxlLm9yZw==';
 const WORK_KEY = 'Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2Ji1Hg0FeDcBa987654321=';
 const RU_KEY = 'Mn4Kp2Qr8St6Uv0Wx1Yz3Ab5Cd7Ef9Gh2Ij4Kl6Mn8Op0=';
+const ALEX_CONVERSATION_ID = toConversationId(1);
+const WORK_CONVERSATION_ID = toConversationId(2);
+const RU_CONVERSATION_ID = toConversationId(3);
 
 const rows: Array<ConversationRowData> = [
-    { id: 1, publicKey: ALEX_KEY, name: 'Alex Rivera' },
-    { id: 2, publicKey: WORK_KEY, name: undefined },
-    { id: 3, publicKey: RU_KEY, name: 'Работа' },
+    { id: ALEX_CONVERSATION_ID, publicKey: ALEX_KEY, name: 'Alex Rivera' },
+    { id: WORK_CONVERSATION_ID, publicKey: WORK_KEY, name: undefined },
+    { id: RU_CONVERSATION_ID, publicKey: RU_KEY, name: 'Работа' },
 ];
 
 const scene = window.location.hash.replace('#', '') || 'chat';
 const demoTransport: 'direct' | 'relay' | undefined = scene === 'relay' ? 'relay' : undefined;
 
-setConnectionState(ALEX_KEY, 'open');
-setConnectionTransport(ALEX_KEY, demoTransport);
-setConversationOrder(ALEX_KEY, Date.parse('2026-07-23T13:58:00'));
-setConnectionState(WORK_KEY, 'connecting');
-setUnreadCount(WORK_KEY, 2);
-setConversationOrder(WORK_KEY, Date.parse('2026-07-23T12:10:00'));
-setConnectionState(RU_KEY, 'closed');
-setConversationOrder(RU_KEY, Date.parse('2026-07-22T19:30:00'));
+setConnectionState(ALEX_CONVERSATION_ID, 'open');
+setConnectionTransport(ALEX_CONVERSATION_ID, demoTransport);
+setConversationOrder(ALEX_CONVERSATION_ID, Date.parse('2026-07-23T13:58:00'));
+setConnectionState(WORK_CONVERSATION_ID, 'connecting');
+setUnreadCount(WORK_CONVERSATION_ID, 2);
+setConversationOrder(WORK_CONVERSATION_ID, Date.parse('2026-07-23T12:10:00'));
+setConnectionState(RU_CONVERSATION_ID, 'closed');
+setConversationOrder(RU_CONVERSATION_ID, Date.parse('2026-07-22T19:30:00'));
 
 const t = (hhmm: string) => Date.parse(`2026-07-23T${hhmm}:00`);
 
@@ -90,9 +94,9 @@ const messages: Array<ChatWindowMessageType> = [
     { id: t('13:58'), sender: 'you', timestamp: t('13:58'), text: 'One sec…' },
 ];
 
-setActiveConversation(1);
+setActiveConversation(ALEX_CONVERSATION_ID);
 
-const chatStore = getChatStore(ALEX_KEY);
+const chatStore = getChatStore(ALEX_CONVERSATION_ID);
 chatStore.hydrate(messages);
 chatStore.setTyping(true);
 
@@ -142,6 +146,7 @@ const Scene: React.FC = () => {
     const chat = (
         <div className='chat'>
             <ChatHeader
+                conversationId={ALEX_CONVERSATION_ID}
                 name='Alex Rivera'
                 publicKey={ALEX_KEY}
                 isMobile={false}

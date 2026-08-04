@@ -1,3 +1,4 @@
+import { ConversationId } from '../../../types/conversation';
 import { ShieldCheckIcon, PlusIcon } from '../../icons';
 import BrandHeader from './BrandHeader';
 import ConnectBlock from './ConnectBlock';
@@ -17,7 +18,7 @@ type SidebarProps = {
     showFab: boolean;
     onFab: () => void;
     conversations: Array<ConversationRowData>;
-    onSelect: (id: number) => void;
+    onSelect: (id: ConversationId) => void;
     onPrivacy: () => void;
 };
 

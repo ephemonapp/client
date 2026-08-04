@@ -17,6 +17,7 @@ import { diagnose } from '../../lib/diagnose';
 import { displayName } from '../../lib/identicon';
 import { getSettings } from '../../lib/settingsStore';
 import { UiConnectionState } from '../../lib/status';
+import { ConversationId } from '../../types/conversation';
 import ConnectModal from '../modals/ConnectModal';
 import IdleLockModal from '../modals/IdleLockModal';
 import Modal from '../modals/Modal';
@@ -39,7 +40,7 @@ type ModalState =
     | { kind: 'qr'; own: boolean; title: string; subtitle: string; keyText: string }
     | { kind: 'scanner' }
     | { kind: 'privacy' }
-    | { kind: 'rename'; id: number; current: string };
+    | { kind: 'rename'; id: ConversationId; current: string };
 
 type MessengerProps = {
     passwordState: PasswordState;
@@ -83,21 +84,27 @@ const Messenger: React.FC<MessengerProps> = ({
         setShowConnectMobile(false);
     }, []);
     const onConnectionStateChanged = useCallback(
-        (connection: Connection, _from: ConnectionState, to: ConnectionState) => {
-            setConnectionState(connection.publicKey, normalizeState(to));
+        (conversationId: ConversationId, _connection: Connection, _from: ConnectionState, to: ConnectionState) => {
+            setConnectionState(conversationId, normalizeState(to));
         },
         [],
     );
-    const onConnectionTransportChanged = useCallback((connection: Connection, transport: ConnectionTransport) => {
-        setConnectionTransport(connection.publicKey, transport);
-    }, []);
-    const onConnectionError = useCallback((connection: Connection, error: ConnectionError) => {
-        diagnose(error.issue, error.serverUrl)
-            .then((code) => setConnectionNotice(connection.publicKey, { code, serverUrl: error.serverUrl }))
-            .catch(() => setConnectionNotice(connection.publicKey, { code: error.issue, serverUrl: error.serverUrl }));
-    }, []);
+    const onConnectionTransportChanged = useCallback(
+        (conversationId: ConversationId, _connection: Connection, transport: ConnectionTransport) => {
+            setConnectionTransport(conversationId, transport);
+        },
+        [],
+    );
+    const onConnectionError = useCallback(
+        (conversationId: ConversationId, _connection: Connection, error: ConnectionError) => {
+            diagnose(error.issue, error.serverUrl)
+                .then((code) => setConnectionNotice(conversationId, { code, serverUrl: error.serverUrl }))
+                .catch(() => setConnectionNotice(conversationId, { code: error.issue, serverUrl: error.serverUrl }));
+        },
+        [],
+    );
 
-    const [publicKey, metadata, connections] = useEphemon(
+    const [publicKey, metadata, conversations] = useEphemon(
         passwordState,
         onPermissionDefault,
         onPermissionGranted,
@@ -116,10 +123,10 @@ const Messenger: React.FC<MessengerProps> = ({
         onPublicKey(publicKey ?? undefined);
     }, [publicKey, onPublicKey]);
 
-    const callbacksFor = useConnectionCallbacksCache(connections.callbacks);
+    const callbacksFor = useConnectionCallbacksCache(conversations.callbacks);
 
-    const connectionsRef = useRef(connections);
-    connectionsRef.current = connections;
+    const conversationsRef = useRef(conversations);
+    conversationsRef.current = conversations;
 
     const [debugSelfConnectValue] = useSearchParams('__debug_self_connect');
     const {
@@ -127,16 +134,19 @@ const Messenger: React.FC<MessengerProps> = ({
         callbacks: {
             lifecycle: { open: openConnection },
         },
-    } = connections;
+    } = conversations;
     useEffect(() => {
         if (publicKey && debugSelfConnectValue === 'true') {
             const id = createConnection(publicKey);
-            openConnection(id).catch(console.error);
+            if (id !== undefined) openConnection(id).catch(console.error);
         }
     }, [publicKey, createConnection, openConnection, debugSelfConnectValue]);
 
-    const rows: Array<ConversationRowData> = connections.available;
-    const ids = useMemo(() => connections.available.map((connection) => connection.id), [connections.available]);
+    const rows: Array<ConversationRowData> = conversations.available;
+    const ids = useMemo(
+        () => conversations.available.map((conversation) => conversation.id),
+        [conversations.available],
+    );
 
     useEffect(() => {
         if (!isMobile) return;
@@ -153,10 +163,10 @@ const Messenger: React.FC<MessengerProps> = ({
     const doConnect = useCallback((rawCode: string) => {
         const contact = readContact(rawCode);
         if (!contact) return;
-        const { create, callbacks } = connectionsRef.current;
-        setConnectionNotice(contact.publicKey, undefined);
+        const { create, callbacks } = conversationsRef.current;
         const id = create(contact.publicKey, contact.serverUrl);
-        if (id >= 0) {
+        if (id !== undefined) {
+            setConnectionNotice(id, undefined);
             callbacks.lifecycle.open(id).catch(() => {});
         }
         setModal(null);
@@ -165,7 +175,7 @@ const Messenger: React.FC<MessengerProps> = ({
     }, []);
 
     const onSelect = useCallback(
-        (id: number) => {
+        (id: ConversationId) => {
             setActiveConversation(id);
             if (isMobile) setPane('chat');
         },
@@ -201,7 +211,7 @@ const Messenger: React.FC<MessengerProps> = ({
     }, [publicKey]);
 
     const openPeerQr = useCallback((peerKey: string, name: string | undefined) => {
-        const known = connectionsRef.current.available.find((candidate) => candidate.publicKey === peerKey);
+        const known = conversationsRef.current.available.find((candidate) => candidate.publicKey === peerKey);
         setModal({
             kind: 'qr',
             own: false,
@@ -211,12 +221,12 @@ const Messenger: React.FC<MessengerProps> = ({
         });
     }, []);
 
-    const openRename = useCallback((id: number, current: string) => {
+    const openRename = useCallback((id: ConversationId, current: string) => {
         setModal({ kind: 'rename', id, current });
     }, []);
 
-    const onDeleteConversation = useCallback((id: number) => {
-        connectionsRef.current.callbacks.lifecycle.delete(id).catch(() => {});
+    const onDeleteConversation = useCallback((id: ConversationId) => {
+        conversationsRef.current.callbacks.lifecycle.delete(id).catch(() => {});
         setPane('list');
     }, []);
 
@@ -228,7 +238,7 @@ const Messenger: React.FC<MessengerProps> = ({
     const onSaveRename = useCallback(
         (name: string) => {
             if (modal?.kind !== 'rename') return;
-            connectionsRef.current.callbacks.view.setName(modal.id, name || undefined);
+            conversationsRef.current.callbacks.view.setName(modal.id, name || undefined);
             setModal(null);
         },
         [modal],
@@ -261,15 +271,15 @@ const Messenger: React.FC<MessengerProps> = ({
                 className='messenger__chat-area'
                 style={{ display: showChat ? 'flex' : 'none' }}
             >
-                {connections.available.map((connection) => (
+                {conversations.available.map((conversation) => (
                     <ChatPane
-                        key={connection.id}
-                        id={connection.id}
+                        key={conversation.id}
+                        id={conversation.id}
                         columnVisible={showChat}
                         isMobile={isMobile}
-                        name={connection.name}
-                        publicKey={connection.publicKey}
-                        callbacks={callbacksFor(connection.id)}
+                        name={conversation.name}
+                        publicKey={conversation.publicKey}
+                        callbacks={callbacksFor(conversation.id)}
                         onBack={onBackToList}
                         onOpenPeerQr={openPeerQr}
                         onOpenRename={openRename}

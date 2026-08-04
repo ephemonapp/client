@@ -1,5 +1,5 @@
-export interface ReplyToMessageType {
+export interface ReplyToMessageType<Sender = 'you' | 'peer'> {
     id: number;
-    sender: 'you' | 'peer';
+    sender: Sender;
     text: string;
 }

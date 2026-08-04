@@ -1,6 +1,6 @@
 import { defineConfig } from '@playwright/test';
 
-export const AUDIT_HOST = 'audit.ephemon.test';
+export const AUDIT_HOST = 'audit.ephemon.app';
 export const AUDIT_PORT = 8443;
 export const AUDIT_ORIGIN = `https://${AUDIT_HOST}:${AUDIT_PORT}`;
 

@@ -1,9 +1,10 @@
 import { useActiveConversation } from '../../../lib/connectionStore';
+import { ConversationId } from '../../../types/conversation';
 import EmptyState from './EmptyState';
 import React from 'react';
 
 type EmptyStateSlotProps = {
-    ids: ReadonlyArray<number>;
+    ids: ReadonlyArray<ConversationId>;
 };
 
 const EmptyStateSlot: React.FC<EmptyStateSlotProps> = ({ ids }) => {
