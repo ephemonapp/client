@@ -13,7 +13,7 @@
         "publish": "webpack --env environment=production"
     },
     "dependencies": {
-        "@microsoft/signalr": "^10.0.0",
+        "@microsoft/signalr": "^10.0.11",
         "pako": "^3.0.1",
         "tweetnacl": "^1.0.3",
         "tweetnacl-util": "^0.15.1"
