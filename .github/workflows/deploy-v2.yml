@@ -51,10 +51,10 @@ jobs:
           args: --exclude 'index.html' --exclude 'service-worker.js' --exclude 'manifest.json' --exclude '*.map' --exclude 'coverage/**' --cache-control 'public, max-age=31104000, immutable' --follow-symlinks
         env:
           AWS_S3_BUCKET: ${{ secrets.AWS_BUCKET_NEXT }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          AWS_S3_ENDPOINT: ${{ secrets.AWS_S3_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_KEY_ID_NEXT }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_KEY_NEXT }}
+          AWS_REGION: ${{ secrets.AWS_REGION_NEXT }}
+          AWS_S3_ENDPOINT: ${{ secrets.AWS_S3_ENDPOINT_NEXT }}
           SOURCE_DIR: packages/ephemon-app/dist
       - name: Upload fixed-url files with no-cache
         uses: jakejarvis/s3-sync-action@v0.5.1
@@ -62,10 +62,10 @@ jobs:
           args: --exclude '*' --include 'index.html' --include 'service-worker.js' --include 'manifest.json' --include '*.map' --include 'coverage/**' --cache-control 'no-cache' --follow-symlinks
         env:
           AWS_S3_BUCKET: ${{ secrets.AWS_BUCKET_NEXT }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          AWS_S3_ENDPOINT: ${{ secrets.AWS_S3_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_KEY_ID_NEXT }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_KEY_NEXT }}
+          AWS_REGION: ${{ secrets.AWS_REGION_NEXT }}
+          AWS_S3_ENDPOINT: ${{ secrets.AWS_S3_ENDPOINT_NEXT }}
           SOURCE_DIR: packages/ephemon-app/dist
 
   prerelease-oss:

@@ -13,14 +13,14 @@
         "publish": "webpack --env environment=production"
     },
     "dependencies": {
-        "@microsoft/signalr": "^10.0.0",
+        "@microsoft/signalr": "^10.0.11",
         "pako": "^3.0.1",
         "tweetnacl": "^1.0.3",
         "tweetnacl-util": "^0.15.1"
     },
     "devDependencies": {
         "@types/jsdom": "^28.0.3",
-        "@types/pako": "^2.0.4",
+        "@types/pako": "^3.0.0",
         "@vitest/coverage-v8": "^4.1.10",
         "coverage-badges-cli": "^2.2.0",
         "jsdom": "^30.0.1",
