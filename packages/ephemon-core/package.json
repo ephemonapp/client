@@ -19,7 +19,7 @@
         "tweetnacl-util": "^0.15.1"
     },
     "devDependencies": {
-        "@types/jsdom": "^28.0.3",
+        "@types/jsdom": "^30.0.0",
         "@types/pako": "^3.0.0",
         "@vitest/coverage-v8": "^4.1.10",
         "coverage-badges-cli": "^2.2.0",
