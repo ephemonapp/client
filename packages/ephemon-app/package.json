@@ -23,7 +23,7 @@
     },
     "devDependencies": {
         "@ephemon/core": "file:../ephemon-core",
-        "@types/react": "^19.2.17",
+        "@types/react": "^19.2.18",
         "@types/react-dom": "^19.2.4",
         "copy-webpack-plugin": "^14.0.0",
         "css-loader": "^7.1.4",
