@@ -1,7 +1,8 @@
 import { ChatStore, MessageKey, useMessageKeys, useTyping } from '../../../lib/chatStore';
 import { ChatWindowMessageType } from '../../../types/chatMessageType';
+import { MemberNumber } from '../../../types/conversation';
 import { ArrowDownIcon } from '../../icons';
-import MessageBubble from './MessageBubble';
+import MessageBubble, { GroupAuthor } from './MessageBubble';
 import TypingIndicator from './TypingIndicator';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Virtualizer, VirtualizerHandle } from 'virtua';
@@ -14,17 +15,23 @@ export type MessageListHandle = {
 type MessageListProps = {
     store: ChatStore;
     onReply: (message: ChatWindowMessageType) => void;
-    onReact: (id: number, event: React.MouseEvent) => void;
+    onReact: (id: MessageKey, event: React.MouseEvent) => void;
     onDoubleReact: (message: ChatWindowMessageType) => void;
-    onSeen: (id: number) => void;
+    onSeen: (id: MessageKey) => void;
     onRetry: () => void;
+    authorOf?: (author?: MemberNumber) => GroupAuthor | undefined;
+    onOpenAuthor?: (publicKey: string, name: string | undefined) => void;
+    onOpenReceipts?: (message: ChatWindowMessageType) => void;
+    ownSeenOf?: (message: ChatWindowMessageType) => boolean;
     handleRef?: React.RefObject<MessageListHandle | null>;
 };
 
 const STICK_THRESHOLD = 120;
 const HIGHLIGHT_HOLD = 1000;
 const SMOOTH_SPAN = 3;
-const TYPING_ENTRY = 'typing:';
+const TYPING_ENTRY = 'typing';
+
+type ListEntry = MessageKey | typeof TYPING_ENTRY;
 
 function isShortJump(virtualizer: VirtualizerHandle, index: number): boolean {
     return (
@@ -32,7 +39,7 @@ function isShortJump(virtualizer: VirtualizerHandle, index: number): boolean {
     );
 }
 
-function rowInView(scroller: HTMLElement, entry: MessageKey): { row: DOMRect; view: DOMRect } | undefined {
+function rowInView(scroller: HTMLElement, entry: ListEntry): { row: DOMRect; view: DOMRect } | undefined {
     const element = scroller.querySelector(`[data-entry="${CSS.escape(entry)}"]`);
     if (!element) return undefined;
     const view = scroller.getBoundingClientRect();
@@ -40,18 +47,27 @@ function rowInView(scroller: HTMLElement, entry: MessageKey): { row: DOMRect; vi
     return row.bottom > view.top && row.top < view.bottom ? { row, view } : undefined;
 }
 
-function alignmentOf(entry: MessageKey): string {
-    if (entry.startsWith('you:')) return 'end';
-    return entry.startsWith('peer:') || entry === TYPING_ENTRY ? 'start' : 'center';
+function alignmentOf(store: ChatStore, entry: ListEntry): string {
+    if (entry === TYPING_ENTRY) return 'start';
+    switch (store.getMessage(entry)?.sender) {
+        case 'you':
+            return 'end';
+        case 'peer':
+            return 'start';
+        default:
+            return 'center';
+    }
 }
 
-function isMessage(entry: MessageKey): boolean {
-    return entry.startsWith('you:') || entry.startsWith('peer:');
+function isMessage(store: ChatStore, entry: ListEntry): boolean {
+    if (entry === TYPING_ENTRY) return false;
+    const sender = store.getMessage(entry)?.sender;
+    return sender === 'you' || sender === 'peer';
 }
 
-function newestMessage(entries: ReadonlyArray<MessageKey>): MessageKey | undefined {
+function newestMessage(store: ChatStore, entries: ReadonlyArray<ListEntry>): ListEntry | undefined {
     for (let index = entries.length - 1; index >= 0; index -= 1) {
-        if (isMessage(entries[index])) return entries[index];
+        if (isMessage(store, entries[index])) return entries[index];
     }
     return undefined;
 }
@@ -63,18 +79,22 @@ const MessageList: React.FC<MessageListProps> = ({
     onDoubleReact,
     onSeen,
     onRetry,
+    authorOf,
+    onOpenAuthor,
+    onOpenReceipts,
+    ownSeenOf,
     handleRef,
 }) => {
     const keys = useMessageKeys(store);
     const typing = useTyping(store);
-    const entries = useMemo(() => (typing ? [...keys, TYPING_ENTRY] : keys), [keys, typing]);
+    const entries = useMemo<ReadonlyArray<ListEntry>>(() => (typing ? [...keys, TYPING_ENTRY] : keys), [keys, typing]);
 
     const scrollRef = useRef<HTMLDivElement>(null);
     const virtualizerRef = useRef<VirtualizerHandle>(null);
     const stickToBottomRef = useRef(true);
     const entriesRef = useRef(entries);
     entriesRef.current = entries;
-    const pendingJumpRef = useRef<{ entry: MessageKey; index: number } | undefined>(undefined);
+    const pendingJumpRef = useRef<{ entry: ListEntry; index: number } | undefined>(undefined);
     const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
     const [tailLost, setTailLost] = useState(false);
@@ -90,7 +110,7 @@ const MessageList: React.FC<MessageListProps> = ({
     const syncTail = useCallback(() => {
         const scroller = scrollRef.current;
         if (!scroller) return;
-        const newest = newestMessage(entriesRef.current);
+        const newest = newestMessage(store, entriesRef.current);
         const lost = newest !== undefined && rowInView(scroller, newest) === undefined;
 
         if (pinningRef.current) {
@@ -118,7 +138,7 @@ const MessageList: React.FC<MessageListProps> = ({
             virtualizerRef.current?.scrollToIndex(pending.index, { align: 'start' });
         }
 
-        store.setHighlight(pending.entry);
+        store.setHighlight(pending.entry === TYPING_ENTRY ? undefined : pending.entry);
         clearTimeout(highlightTimerRef.current);
         highlightTimerRef.current = setTimeout(() => store.setHighlight(undefined), HIGHLIGHT_HOLD);
     }, [store]);
@@ -184,7 +204,7 @@ const MessageList: React.FC<MessageListProps> = ({
     if (handleRef) handleRef.current = handle;
 
     const renderRow = useCallback(
-        (entry: MessageKey) => (
+        (entry: ListEntry) => (
             <Row
                 store={store}
                 entry={entry}
@@ -194,9 +214,24 @@ const MessageList: React.FC<MessageListProps> = ({
                 onSeen={onSeen}
                 onRetry={onRetry}
                 onScrollToMessage={scrollToMessage}
+                authorOf={authorOf}
+                onOpenAuthor={onOpenAuthor}
+                onOpenReceipts={onOpenReceipts}
+                ownSeenOf={ownSeenOf}
             />
         ),
-        [store, onReply, onReact, onDoubleReact, onSeen, onRetry, scrollToMessage],
+        [
+            store,
+            onReply,
+            onReact,
+            onDoubleReact,
+            onSeen,
+            onRetry,
+            scrollToMessage,
+            authorOf,
+            onOpenAuthor,
+            onOpenReceipts,
+        ],
     );
 
     return (
@@ -232,13 +267,17 @@ const MessageList: React.FC<MessageListProps> = ({
 
 type RowProps = {
     store: ChatStore;
-    entry: MessageKey;
+    entry: ListEntry;
     onReply: (message: ChatWindowMessageType) => void;
-    onReact: (id: number, event: React.MouseEvent) => void;
+    onReact: (id: MessageKey, event: React.MouseEvent) => void;
     onDoubleReact: (message: ChatWindowMessageType) => void;
-    onSeen: (id: number) => void;
+    onSeen: (id: MessageKey) => void;
     onRetry: () => void;
     onScrollToMessage: (entry: MessageKey) => void;
+    authorOf?: (author?: MemberNumber) => GroupAuthor | undefined;
+    onOpenAuthor?: (publicKey: string, name: string | undefined) => void;
+    onOpenReceipts?: (message: ChatWindowMessageType) => void;
+    ownSeenOf?: (message: ChatWindowMessageType) => boolean;
 };
 
 const Row = React.memo<RowProps>(function Row({ store, entry, ...handlers }) {
@@ -250,16 +289,16 @@ const Row = React.memo<RowProps>(function Row({ store, entry, ...handlers }) {
         );
     }
 
-    const isMarker = entry.startsWith('date:');
-    const marker = isMarker ? store.getMessage(entry) : undefined;
+    const record = store.getMessage(entry);
+    const isMarker = record?.sender === 'date';
 
     return (
         <div
-            className={`msg-row msg-row--${alignmentOf(entry)}`}
+            className={`msg-row msg-row--${alignmentOf(store, entry)}`}
             data-entry={entry}
         >
             {isMarker ? (
-                marker && <div className='msg-chip msg-chip--day'>{marker.text}</div>
+                record && <div className='msg-chip msg-chip--day'>{record.text}</div>
             ) : (
                 <MessageBubble
                     store={store}

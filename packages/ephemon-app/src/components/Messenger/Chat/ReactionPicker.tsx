@@ -1,3 +1,4 @@
+import { EventId } from '../../../types/eventId';
 import React from 'react';
 
 export const REACTION_EMOJIS = [
@@ -19,7 +20,7 @@ export const REACTION_EMOJIS = [
 ];
 
 export type ReactionAnchor = {
-    msgId: number;
+    msgId: EventId;
     x: number;
     y: number;
     origin: string;
@@ -28,10 +29,11 @@ export type ReactionAnchor = {
 type ReactionPickerProps = {
     anchor: ReactionAnchor;
     onPick: (emoji: string) => void;
+    chosen?: string;
     onClose: () => void;
 };
 
-const ReactionPicker: React.FC<ReactionPickerProps> = ({ anchor, onPick, onClose }) => (
+const ReactionPicker: React.FC<ReactionPickerProps> = ({ anchor, onPick, onClose, chosen }) => (
     <div
         className='reaction-picker-overlay'
         onClick={onClose}
@@ -44,6 +46,7 @@ const ReactionPicker: React.FC<ReactionPickerProps> = ({ anchor, onPick, onClose
             {REACTION_EMOJIS.map((emoji) => (
                 <button
                     key={emoji}
+                    className={emoji === chosen ? 'reaction-picker__chosen' : undefined}
                     onClick={() => onPick(emoji)}
                 >
                     {emoji}

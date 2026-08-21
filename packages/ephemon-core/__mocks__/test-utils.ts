@@ -329,6 +329,7 @@ export function mockEphemonCoreServices() {
     };
     const workerServiceMock = {
         initialize: vi.fn().mockResolvedValue(undefined),
+        registration: undefined as any,
         controller: {
             postMessage: vi.fn(),
         },

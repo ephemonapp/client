@@ -204,7 +204,7 @@ test('render audit', async ({ browser }, testInfo) => {
 
         progress('dialling alice -> bob...');
         await auditStep(testInfo, alice.page, 'connect to peer', async () => {
-            await alice.connectTo(bob.publicKey);
+            await alice.connectTo(bob.publicKey, bob);
             await alice.waitForConnected();
         });
         await bob.waitForConnected();
@@ -236,7 +236,7 @@ test('render audit', async ({ browser }, testInfo) => {
 
         progress('re-dialling alice -> bob...');
         await auditStep(testInfo, alice.page, 'reconnect to peer', async () => {
-            await alice.connectTo(bob.publicKey);
+            await alice.connectTo(bob.publicKey, bob);
             await alice.waitForConnected();
         });
         await bob.waitForConnected();

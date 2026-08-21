@@ -266,6 +266,19 @@
     transition: outline-color 0.5s ease;
 }
 
+.bubble__author {
+    display: block;
+    font:
+        700 11px 'Hanken Grotesk',
+        sans-serif;
+    color: var(--pri);
+    margin-bottom: 3px;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .bubble__text {
     display: block;
     white-space: pre-wrap;
@@ -367,8 +380,14 @@
     z-index: 2;
 }
 
-.bubble__reaction--peer {
+.bubble__reaction {
     cursor: pointer;
+}
+
+.bubble__reaction-more {
+    margin-left: 4px;
+    opacity: 0.65;
+    font-weight: 600;
 }
 
 .bubble__add {
@@ -459,6 +478,15 @@
     display: flex;
     align-items: center;
     gap: 10px;
+}
+
+.chat__observer {
+    margin: 8px 16px;
+    padding: 8px 12px;
+    background: var(--field);
+    border-radius: 11px;
+    font-size: 13px;
+    color: var(--muted);
 }
 
 .connecting__label {
@@ -621,6 +649,80 @@
     background: var(--prih);
 }
 
+.composer--disabled input,
+.composer--disabled .composer__send {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.composer--disabled .composer__send:hover {
+    background: var(--pri);
+}
+
+.introduce {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 30px;
+    overflow-y: auto;
+}
+
+.introduce__card {
+    width: 100%;
+    max-width: 320px;
+    text-align: center;
+}
+
+.introduce__title {
+    font:
+        800 18px 'Hanken Grotesk',
+        sans-serif;
+    margin-bottom: 6px;
+}
+
+.introduce__sub {
+    font:
+        400 12.5px/1.55 'Hanken Grotesk',
+        sans-serif;
+    color: var(--muted);
+    margin-bottom: 16px;
+}
+
+.introduce__input {
+    width: 100%;
+    background: var(--field);
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    padding: 11px 13px;
+    font-size: 13.5px;
+    color: var(--text);
+    outline: none;
+    margin-bottom: 10px;
+}
+
+.introduce__save {
+    width: 100%;
+    padding: 11px;
+    background: var(--pri);
+    color: #fff;
+    border: none;
+    border-radius: 11px;
+    font:
+        700 13px 'Hanken Grotesk',
+        sans-serif;
+    cursor: pointer;
+}
+
+.introduce__save:hover:not(:disabled) {
+    background: var(--prih);
+}
+
+.introduce__save:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
 .empty {
     flex: 1;
     display: flex;
@@ -680,4 +782,10 @@
 
 .reaction-picker button:hover {
     background: var(--field);
+}
+
+.reaction-picker__chosen {
+    background: var(--field);
+    border-radius: 10px;
+    box-shadow: inset 0 0 0 2px var(--pri);
 }

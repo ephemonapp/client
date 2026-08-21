@@ -199,7 +199,8 @@ export function getPrototype(logger: Logger): EphemonPrototype {
             async function update(): Promise<void> {
                 const response = await callService.update(sessionService.signingPublicKeyBase64, subscription);
                 if (response?.ok) {
-                    workerService.controller?.postMessage({ type: 'CLIENT_READY' });
+                    const worker = workerService.registration?.active ?? workerService.controller;
+                    worker?.postMessage({ type: 'CLIENT_READY' });
                 }
             }
 

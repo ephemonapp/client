@@ -1,13 +1,12 @@
 import { ChatStore, getChatStore, MessageKey, ReplyTarget } from '../lib/chatStore';
 import { setUnreadCount } from '../lib/connectionStore';
-import { buildReplay, flipReplyTo } from '../lib/replay';
+import { subscribeHistoryChange } from '../lib/tabSync';
 import { ActionType } from '../types/actionType';
 import { ChatWindowMessageType } from '../types/chatMessageType';
-import { DeliveredType } from '../types/deliveredType';
-import { MessageType } from '../types/messageType';
-import { ReactionType } from '../types/reactionType';
-import { SeenType } from '../types/seenType';
-import { UpdateType } from '../types/updateType';
+import { ChatOperation, InboundChatEvent } from '../types/chatOperation';
+import { ChatEventRecord, ChatMessageRecord, isChatMessageRecord } from '../types/chatRecord';
+import { ConversationId } from '../types/conversation';
+import { EventId } from '../types/eventId';
 import { serverTime, showNotification } from '../utils/functions';
 import { ConnectionCallbacks } from './useConnectionCallbacksCache';
 import { ConnectionState } from '@ephemon/core';
@@ -18,46 +17,50 @@ export type ChatHook = {
     send: {
         action: (type: 'typing') => Promise<void>;
         text: (input: string) => Promise<void>;
-        reaction: (id: number, reaction: string) => Promise<void>;
-        seen: (id: number) => Promise<void>;
+        reaction: (id: EventId, reaction: string) => Promise<void>;
+        seen: (id: EventId) => Promise<void>;
     };
     replyTo: {
-        set: (id: number, sender: 'you' | 'peer', text: string, scrollToReply: () => void) => void;
+        set: (id: EventId, sender: 'you' | 'peer', text: string, scrollToReply: () => void) => void;
         reset: () => void;
     };
     clear: () => Promise<void>;
 };
 
 type ChatHookProps = {
-    publicKey: string;
+    conversationId: ConversationId;
+    ownMemberNumber?: number;
     callbacks: ConnectionCallbacks;
 };
 
 const TYPING_TIMEOUT = 5 * 1000;
+const TYPING_SEND_INTERVAL = 2 * 1000;
 
-export function useChat({ publicKey, callbacks }: ChatHookProps): ChatHook {
+export function useChat({ conversationId, ownMemberNumber, callbacks }: ChatHookProps): ChatHook {
     const {
         view: { setOrder },
         messaging: {
             send: sendMessage,
             history: { get: getHistory, save: saveHistory, clear: clearHistory },
         },
-        events: { setOnStateChanged, setOnMessage },
+        events: { setOnStateChanged, setOnEvent },
     } = callbacks;
 
-    const store = useMemo(() => getChatStore(publicKey), [publicKey]);
+    const store = useMemo(() => getChatStore(conversationId), [conversationId]);
 
-    const notifiedRef = useRef<Set<number>>(new Set());
+    const notifiedRef = useRef<Set<EventId>>(new Set());
     const hasBeenOpenedRef = useRef(false);
     const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const lastTypingSentAtRef = useRef(Number.NEGATIVE_INFINITY);
+    const typingSendPendingRef = useRef(false);
 
     useEffect(() => {
         let cancelled = false;
         getHistory()
             .then((history) => {
                 if (cancelled) return;
-                for (const message of history) {
-                    notifiedRef.current.add(message.id);
+                for (const record of history) {
+                    if (isChatMessageRecord(record)) notifiedRef.current.add(record.id);
                 }
                 store.hydrate(history);
             })
@@ -67,45 +70,62 @@ export function useChat({ publicKey, callbacks }: ChatHookProps): ChatHook {
         };
     }, [store, getHistory]);
 
+    useEffect(
+        () =>
+            subscribeHistoryChange((change) => {
+                if (change.id !== conversationId) return;
+                if (change.cleared) store.clear();
+                getHistory()
+                    .then((history) => store.hydrate(history))
+                    .catch(console.error);
+            }),
+        [conversationId, getHistory, store],
+    );
+
     useEffect(() => {
+        const seenHere = (message: ChatWindowMessageType): boolean =>
+            ownMemberNumber === undefined
+                ? message.seen !== undefined
+                : (message.seenBy ?? []).some((entry) => Number(entry.author) === Number(ownMemberNumber));
         const recount = () => {
             const messages = store.getMessages();
             setUnreadCount(
-                publicKey,
-                messages.filter((message) => message.sender === 'peer' && message.seen === undefined).length,
+                conversationId,
+                messages.filter((message) => message.sender === 'peer' && !seenHere(message)).length,
             );
         };
         recount();
         return store.subscribeAny(recount);
-    }, [store, publicKey]);
+    }, [store, conversationId, ownMemberNumber]);
 
     useEffect(() => {
         const dirty = new Map<MessageKey, 'upsert' | 'delete'>();
-        let clearPending = false;
+        let cleared: ReadonlyArray<ChatEventRecord> | undefined;
         let writing = false;
 
         const drain = async () => {
             if (writing) return;
             writing = true;
             try {
-                while (clearPending || dirty.size > 0) {
-                    if (clearPending) {
-                        clearPending = false;
+                while (cleared !== undefined || dirty.size > 0) {
+                    if (cleared !== undefined) {
+                        const dropped = cleared;
+                        cleared = undefined;
                         dirty.clear();
-                        await clearHistory();
+                        await clearHistory(dropped);
                         continue;
                     }
                     const batch = [...dirty.entries()];
                     dirty.clear();
-                    const upserts: Array<ChatWindowMessageType> = [];
+                    const upserts: Array<ChatEventRecord> = [];
                     const deletes: Array<MessageKey> = [];
                     for (const [key, operation] of batch) {
                         if (operation === 'delete') {
                             deletes.push(key);
                             continue;
                         }
-                        const message = store.getMessage(key);
-                        if (message !== undefined && message.sender !== 'date') upserts.push(message);
+                        const record = store.getRecord(key);
+                        if (record !== undefined) upserts.push(record);
                     }
                     await saveHistory(upserts, deletes);
                 }
@@ -121,11 +141,11 @@ export function useChat({ publicKey, callbacks }: ChatHookProps): ChatHook {
                 switch (mutation.kind) {
                     case 'reset':
                         dirty.clear();
-                        clearPending = false;
+                        cleared = undefined;
                         break;
                     case 'clearAll':
                         dirty.clear();
-                        clearPending = true;
+                        cleared = mutation.records;
                         break;
                     case 'upsert':
                         dirty.set(mutation.key, 'upsert');
@@ -150,118 +170,97 @@ export function useChat({ publicKey, callbacks }: ChatHookProps): ChatHook {
         [store],
     );
 
-    const displayMessage = useCallback(
-        (id: number, sender: 'you' | 'peer', message: MessageType) => {
-            store.add({ id, sender, ...message });
-            if (sender === 'peer' && !notifiedRef.current.has(id)) {
-                notifiedRef.current.add(id);
+    const displayRecord = useCallback(
+        (record: ChatEventRecord) => {
+            const held = store.getMessage(record.id) !== undefined;
+            store.apply(record);
+            if (!isChatMessageRecord(record)) return;
+            if (held) return;
+            if (record.sender === 'peer' && !notifiedRef.current.has(record.id)) {
+                notifiedRef.current.add(record.id);
                 if (document.hidden) {
-                    showNotification('New message!', { body: message.text });
+                    showNotification('New message!', { body: record.text });
                 }
             }
         },
         [store],
     );
 
-    const sendUpdate = useCallback(
-        async (update: UpdateType) => {
-            sendMessage(JSON.stringify(update));
-        },
-        [sendMessage],
-    );
+    const sendOperation = useCallback((operation: ChatOperation) => sendMessage(operation), [sendMessage]);
 
     const sendAction = useCallback(
         async (action: ActionType) => {
-            await sendUpdate({ id: serverTime(), action });
+            const at = Date.now();
+            if (typingSendPendingRef.current || at - lastTypingSentAtRef.current < TYPING_SEND_INTERVAL) return;
+            typingSendPendingRef.current = true;
+            lastTypingSentAtRef.current = at;
+            try {
+                await sendOperation({ kind: action });
+            } finally {
+                typingSendPendingRef.current = false;
+            }
         },
-        [sendUpdate],
+        [sendOperation],
     );
 
     const sendText = useCallback(
         async (input: string) => {
-            const at = serverTime();
             const replyTo = store.getReplyTo();
-            await sendUpdate({
-                id: at,
-                message: { timestamp: at, text: input, reply_to: flipReplyTo(replyTo) },
+            const record = await sendOperation({
+                kind: 'text',
+                text: input,
+                replyTo,
             });
-            displayMessage(at, 'you', { timestamp: at, text: input, reply_to: replyTo });
+            if (record === undefined) return;
+            displayRecord(record);
             store.setReplyTo(undefined);
-            setOrder(at);
+            setOrder(record.timestamp);
         },
-        [store, sendUpdate, displayMessage, setOrder],
-    );
-
-    const setMessageDelivered = useCallback(
-        (id: number, delivered: DeliveredType, sender: 'you' | 'peer') => {
-            store.patch(id, sender, (message) => ({
-                ...message,
-                delivered: {
-                    ...delivered,
-                    timestamp: Math.min(message.delivered?.timestamp ?? delivered.timestamp, delivered.timestamp),
-                },
-            }));
-        },
-        [store],
-    );
-
-    const setMessageSeen = useCallback(
-        (id: number, seen: SeenType, sender: 'you' | 'peer') => {
-            store.patch(id, sender, (message) => ({
-                ...message,
-                seen: { ...seen, timestamp: Math.min(message.seen?.timestamp ?? seen.timestamp, seen.timestamp) },
-            }));
-        },
-        [store],
-    );
-
-    const setMessageReaction = useCallback(
-        (id: number, sender: 'you' | 'peer', reaction: ReactionType) => {
-            store.patch(id, sender, (message) =>
-                message.reaction != null && reaction.timestamp <= message.reaction.timestamp
-                    ? message
-                    : { ...message, reaction },
-            );
-        },
-        [store],
+        [store, sendOperation, displayRecord, setOrder],
     );
 
     const sendDelivered = useCallback(
-        async (id: number) => {
-            const at = serverTime();
-            setMessageDelivered(id, { timestamp: at }, 'peer');
-            await sendUpdate({ id, delivered: { timestamp: at } });
+        async (id: EventId) => {
+            const record = await sendOperation({ kind: 'delivered', target: id });
+            if (record !== undefined) store.apply(record);
         },
-        [sendUpdate, setMessageDelivered],
+        [sendOperation, store],
     );
 
     const sendSeen = useCallback(
-        async (id: number) => {
-            const at = serverTime();
-            setMessageSeen(id, { timestamp: at }, 'peer');
-            await sendUpdate({ id, seen: { timestamp: at } });
+        async (id: EventId) => {
+            const record = await sendOperation({ kind: 'seen', target: id });
+            if (record !== undefined) store.apply(record);
         },
-        [sendUpdate, setMessageSeen],
+        [sendOperation, store],
     );
 
     const sendReaction = useCallback(
-        async (id: number, value: string) => {
-            const at = serverTime();
-            await sendUpdate({ id, reaction: { timestamp: at, value } });
-            setMessageReaction(id, 'peer', { timestamp: at, value });
+        async (id: EventId, value: string) => {
+            const record = await sendOperation({
+                kind: 'reaction',
+                target: id,
+                value,
+            });
+            if (record !== undefined) store.apply(record);
         },
-        [sendUpdate, setMessageReaction],
+        [sendOperation, store],
     );
 
-    const resendCached = useCallback(async () => {
-        await sendUpdate({ id: serverTime(), history: buildReplay(store.getMessages()) });
-    }, [sendUpdate, store]);
+    const synchronize = useCallback(async () => {
+        await sendOperation({ kind: 'sync', records: store.getRecords() });
+    }, [sendOperation, store]);
 
     const setReplyTo = useCallback(
-        (id: number, sender: 'you' | 'peer', text: string, scrollToReply: () => void) => {
+        (id: EventId, sender: 'you' | 'peer', text: string, scrollToReply: () => void) => {
             const current = store.getReplyTo();
             if (current?.id === id && current.sender === sender) return;
-            store.setReplyTo({ id, sender, text, scrollToReply } satisfies ReplyTarget);
+            store.setReplyTo({
+                id,
+                sender,
+                text,
+                scrollToReply,
+            } satisfies ReplyTarget);
         },
         [store],
     );
@@ -278,56 +277,51 @@ export function useChat({ publicKey, callbacks }: ChatHookProps): ChatHook {
             if (to === ConnectionState.Open || to === ConnectionState.Degraded) {
                 if (hasBeenOpenedRef.current) return;
                 hasBeenOpenedRef.current = true;
-                resendCached().catch(console.error);
+                synchronize().catch(console.error);
             } else if (to === ConnectionState.Closed) {
                 displayTyping(false);
                 notifiedRef.current.clear();
                 hasBeenOpenedRef.current = false;
             }
         },
-        [resendCached, displayTyping],
+        [synchronize, displayTyping],
     );
 
-    const onUpdate = useCallback(
-        (update: UpdateType) => {
-            if (update.action === 'typing') displayTyping(true);
-            if (update.message != null) {
-                displayTyping(false);
-                displayMessage(update.id, 'peer', update.message);
-                sendDelivered(update.id).catch(console.error);
-                setOrder(update.id);
+    const onEvent = useCallback(
+        (event: InboundChatEvent) => {
+            if (event.kind === 'typing') {
+                displayTyping(true);
+                return;
             }
-            if (update.delivered != null) setMessageDelivered(update.id, update.delivered, 'you');
-            if (update.seen != null) setMessageSeen(update.id, update.seen, 'you');
-            if (update.reaction != null) setMessageReaction(update.id, 'you', update.reaction);
-            if (update.history != null) {
-                for (const historical of update.history) {
-                    onUpdate(historical);
-                }
+            const record = event.record;
+            if (!isChatMessageRecord(record)) {
+                displayRecord(record);
+                return;
+            }
+            displayTyping(false);
+            displayRecord(record);
+            if (record.sender === 'peer') {
+                sendDelivered(record.id).catch(console.error);
+                setOrder(record.timestamp);
             }
         },
-        [
-            displayTyping,
-            displayMessage,
-            sendDelivered,
-            setOrder,
-            setMessageDelivered,
-            setMessageSeen,
-            setMessageReaction,
-        ],
+        [displayTyping, displayRecord, sendDelivered, setOrder],
     );
 
-    const onMessage = useCallback((value: string) => onUpdate(JSON.parse(value) as UpdateType), [onUpdate]);
-
     useEffect(() => setOnStateChanged(onStateChanged), [setOnStateChanged, onStateChanged]);
-    useEffect(() => setOnMessage(onMessage), [setOnMessage, onMessage]);
+    useEffect(() => setOnEvent(onEvent), [setOnEvent, onEvent]);
 
     useEffect(() => () => clearTimeout(typingTimeoutRef.current), []);
 
     return useMemo(
         () => ({
             store,
-            send: { action: sendAction, text: sendText, reaction: sendReaction, seen: sendSeen },
+            send: {
+                action: sendAction,
+                text: sendText,
+                reaction: sendReaction,
+                seen: sendSeen,
+            },
             replyTo: { set: setReplyTo, reset: resetReplyTo },
             clear,
         }),

@@ -1,33 +1,42 @@
 import { useConnectionStatus } from '../../../lib/connectionStore';
 import { displayName, hashColor, initials } from '../../../lib/identicon';
 import { connStatus } from '../../../lib/status';
-import { BackIcon, KebabIcon, PencilIcon, QrIcon, RefreshIcon, TrashIcon, CloseIcon } from '../../icons';
+import { ConversationId } from '../../../types/conversation';
+import { BackIcon, KebabIcon, PencilIcon, PlusIcon, QrIcon, RefreshIcon, TrashIcon, CloseIcon } from '../../icons';
 import React, { useCallback, useState } from 'react';
 
 type ChatHeaderProps = {
+    conversationId: ConversationId;
     name: string | undefined;
     publicKey: string;
+    group: boolean;
     isMobile: boolean;
+    onMemberName: () => void;
     onBack: () => void;
     onReconnect: () => void;
     onRename: () => void;
+    onAddMember: () => void;
     onShowPeerQr: () => void;
     onClear: () => void;
     onDelete: () => void;
 };
 
 const ChatHeader: React.FC<ChatHeaderProps> = ({
+    conversationId,
     name,
     publicKey,
+    group,
     isMobile,
+    onMemberName,
     onBack,
     onReconnect,
     onRename,
+    onAddMember,
     onShowPeerQr,
     onClear,
     onDelete,
 }) => {
-    const { state, transport, notice } = useConnectionStatus(publicKey);
+    const { state, transport, notice } = useConnectionStatus(conversationId);
     const { text, color } = connStatus(state, transport, notice);
     const [kebabOpen, setKebabOpen] = useState(false);
 
@@ -39,6 +48,8 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
 
     const reconnect = useCallback(() => run(onReconnect), [run, onReconnect]);
     const rename = useCallback(() => run(onRename), [run, onRename]);
+    const addMember = useCallback(() => run(onAddMember), [run, onAddMember]);
+    const memberName = useCallback(() => run(onMemberName), [run, onMemberName]);
     const showPeerQr = useCallback(() => run(onShowPeerQr), [run, onShowPeerQr]);
     const clear = useCallback(() => run(onClear), [run, onClear]);
     const remove = useCallback(() => run(onDelete), [run, onDelete]);
@@ -102,16 +113,36 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
                         <PencilIcon />
                         Rename contact
                     </div>
-                    <div
-                        className='kebab__item'
-                        onClick={showPeerQr}
-                    >
-                        <QrIcon
-                            w={16}
-                            h={16}
-                        />
-                        Show contact's QR code
-                    </div>
+                    {!group && (
+                        <div
+                            className='kebab__item'
+                            onClick={showPeerQr}
+                        >
+                            <QrIcon
+                                w={16}
+                                h={16}
+                            />
+                            Show contact's QR code
+                        </div>
+                    )}
+                    {group && (
+                        <div
+                            className='kebab__item'
+                            onClick={memberName}
+                        >
+                            <PencilIcon />
+                            Change my name in group
+                        </div>
+                    )}
+                    {group && (
+                        <div
+                            className='kebab__item'
+                            onClick={addMember}
+                        >
+                            <PlusIcon />
+                            Add member
+                        </div>
+                    )}
                     <div
                         className='kebab__item'
                         onClick={clear}

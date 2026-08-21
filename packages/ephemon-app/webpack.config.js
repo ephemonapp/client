@@ -6,6 +6,7 @@ const CopyPlugin = require('copy-webpack-plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const CssMinimizerPlugin = require('css-minimizer-webpack-plugin');
 const JsonMinimizerPlugin = require('json-minimizer-webpack-plugin');
+const TerserPlugin = require('terser-webpack-plugin');
 const { getTemplateParameters, getParameterReplacer, getEnvironmentVariables } = require('./config');
 
 const PRERENDER_DIR = path.resolve(__dirname, '.prerender');
@@ -33,6 +34,15 @@ function readPrerendered(file) {
     return fs.readFileSync(location, 'utf8');
 }
 
+async function minifyMlsGlue(input) {
+    const result = await TerserPlugin.terserMinify({ 'mls.js': input.toString('utf8') }, undefined, {
+        compress: true,
+        mangle: true,
+        format: { comments: false },
+    });
+    return result.code;
+}
+
 module.exports = (args) => {
     const env = {
         ...args,
@@ -55,6 +65,7 @@ module.exports = (args) => {
         mode: isLocal ? 'development' : 'production',
         entry: {
             'app.min': './src/index.tsx',
+            'mls.worker': './src/mls/mls.worker.ts',
             'core.min': {
                 import: path.resolve(__dirname, '../ephemon-core/src/index.ts'),
                 library: {
@@ -62,7 +73,13 @@ module.exports = (args) => {
                     type: 'umd',
                 },
             },
-            ...(isLocal ? { preview: './src/dev/preview.tsx' } : {}),
+            ...(isLocal
+                ? {
+                      'preview': './src/dev/preview.tsx',
+                      'mls.client-test': './src/dev/mlsClientTest.ts',
+                      'mls.storage-test': './src/dev/mlsStorageTest.ts',
+                  }
+                : {}),
         },
         output: {
             filename: '[name].js',
@@ -98,7 +115,15 @@ module.exports = (args) => {
                     use: [MiniCssExtractPlugin.loader, 'css-loader'],
                 },
                 {
+                    test: /zxing_reader\.wasm$/,
+                    type: 'asset/resource',
+                    generator: {
+                        filename: 'scanner.wasm',
+                    },
+                },
+                {
                     test: /\.wasm$/,
+                    exclude: /zxing_reader\.wasm$/,
                     type: 'asset/resource',
                     generator: {
                         filename: '[name][ext]',
@@ -165,6 +190,17 @@ module.exports = (args) => {
                     {
                         from: path.resolve(__dirname, './public/docs/'),
                         to: path.resolve(__dirname, './dist/docs/'),
+                    },
+                    {
+                        from: path.resolve(__dirname, '../../target/wasm-bindgen/ephemon_mls.js'),
+                        to: path.resolve(__dirname, './dist/mls.min.js'),
+                        transform: {
+                            transformer: minifyMlsGlue,
+                        },
+                    },
+                    {
+                        from: path.resolve(__dirname, '../../target/wasm-bindgen/ephemon_mls_bg.wasm'),
+                        to: path.resolve(__dirname, './dist/mls.wasm'),
                     },
                 ],
             }),

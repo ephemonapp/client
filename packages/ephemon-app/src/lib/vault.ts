@@ -4,7 +4,11 @@ import { getLogger } from './logStore';
 
 export const DB_SLUG = 'ephemon';
 
-export { STORE_CONNECTIONS as DB_SLUG_TABLE_CONNECTIONS, STORE_KEYS as DB_SLUG_TABLE_KEYS } from '../utils/stores';
+export {
+    STORE_BLOCKED as DB_SLUG_TABLE_BLOCKED,
+    STORE_CONNECTIONS as DB_SLUG_TABLE_CONNECTIONS,
+    STORE_KEYS as DB_SLUG_TABLE_KEYS,
+} from '../utils/stores';
 
 type Vault = ReturnType<typeof getDatabase>;
 

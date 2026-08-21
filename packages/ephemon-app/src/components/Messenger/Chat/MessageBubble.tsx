@@ -1,31 +1,47 @@
-import { ChatStore, MessageKey, messageKey, useHighlighted, useMessage } from '../../../lib/chatStore';
+import { ChatStore, MessageKey, useHighlighted, useMessage } from '../../../lib/chatStore';
 import { fmtTime } from '../../../lib/time';
 import { ChatWindowMessageType } from '../../../types/chatMessageType';
+import { MemberNumber } from '../../../types/conversation';
 import { formatTimestampLong, now, serverTime } from '../../../utils/functions';
 import { CheckIcon, DoubleCheckIcon, ReplyIcon, SmileyIcon, SpinnerIcon } from '../../icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+
+export type GroupAuthor = {
+    publicKey: string;
+    name: string | undefined;
+    display: string;
+};
 
 type MessageBubbleProps = {
     store: ChatStore;
     entry: MessageKey;
     onReply: (message: ChatWindowMessageType) => void;
-    onReact: (id: number, event: React.MouseEvent) => void;
+    onReact: (id: MessageKey, event: React.MouseEvent) => void;
     onDoubleReact: (message: ChatWindowMessageType) => void;
-    onSeen: (id: number) => void;
+    onSeen: (id: MessageKey) => void;
     onScrollToMessage: (entry: MessageKey) => void;
     onRetry: () => void;
+    authorOf?: (author?: MemberNumber) => GroupAuthor | undefined;
+    onOpenAuthor?: (publicKey: string, name: string | undefined) => void;
+    onOpenReceipts?: (message: ChatWindowMessageType) => void;
+    ownSeenOf?: (message: ChatWindowMessageType) => boolean;
 };
 
 const MUTED = { color: 'var(--muted)' } as const;
 const PRIMARY = { color: 'var(--pri)' } as const;
 
-const Receipt = React.memo<{ deliveredTs?: number; seenTs?: number }>(function Receipt({ deliveredTs, seenTs }) {
+const Receipt = React.memo<{ deliveredTs?: number; seenTs?: number; onOpen?: () => void }>(function Receipt({
+    deliveredTs,
+    seenTs,
+    onOpen,
+}) {
     if (deliveredTs) {
         if (!seenTs) {
             return (
                 <span
                     className='bubble__receipt'
                     title={`Delivered ${formatTimestampLong(deliveredTs)}`}
+                    onClick={onOpen}
                 >
                     <CheckIcon style={MUTED} />
                 </span>
@@ -35,6 +51,7 @@ const Receipt = React.memo<{ deliveredTs?: number; seenTs?: number }>(function R
             <span
                 className='bubble__receipt'
                 title={`Delivered ${formatTimestampLong(deliveredTs)}, Seen ${formatTimestampLong(seenTs)}`}
+                onClick={onOpen}
             >
                 <DoubleCheckIcon style={PRIMARY} />
             </span>
@@ -44,6 +61,7 @@ const Receipt = React.memo<{ deliveredTs?: number; seenTs?: number }>(function R
         <span
             className='bubble__receipt'
             title='Undelivered'
+            onClick={onOpen}
         >
             <SpinnerIcon style={MUTED} />
         </span>
@@ -65,13 +83,21 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
     onSeen,
     onScrollToMessage,
     onRetry,
+    authorOf,
+    onOpenAuthor,
+    onOpenReceipts,
+    ownSeenOf,
 }) => {
     const message = useMessage(store, entry);
     const highlighted = useHighlighted(store, entry);
+    const author = message?.sender === 'peer' ? authorOf?.(message.author) : undefined;
+    const openAuthor = useCallback(() => {
+        if (author !== undefined) onOpenAuthor?.(author.publicKey, author.name);
+    }, [author, onOpenAuthor]);
 
     const topMarkerRef = useRef<HTMLDivElement>(null);
     const bottomMarkerRef = useRef<HTMLDivElement>(null);
-    const seenRef = useRef<boolean>(!!message?.seen);
+    const seenRef = useRef<boolean>(message !== undefined && ownSeenOf?.(message) === true);
     const topSeenRef = useRef<boolean>(false);
     const bottomSeenRef = useRef<boolean>(false);
     const wheelRef = useRef<HTMLDivElement>(null);
@@ -255,14 +281,43 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
     }, [message, onDoubleReact]);
 
     const scrollToQuoted = useCallback(() => {
-        if (message?.reply_to) onScrollToMessage(messageKey(message.reply_to.id, message.reply_to.sender));
+        if (message?.reply_to?.id !== undefined) onScrollToMessage(message.reply_to.id);
     }, [message, onScrollToMessage]);
 
     if (!message) return null;
 
     const isYou = message.sender === 'you';
     const isReplyToYou = message.reply_to?.sender === 'you';
-    const hasReaction = !!message.reaction?.value;
+    const chips = (message.reactions ?? []).filter((entry) => entry.value.length > 0);
+    const chipTitle = useCallback(
+        (authors: ReadonlyArray<MemberNumber>): string =>
+            authors.map((author) => authorOf?.(author)?.display ?? `Member ${Number(author)}`).join(', '),
+        [authorOf],
+    );
+    const hasReaction = chips.length > 0 || !!message.reaction?.value;
+    const chip = [...chips].sort((left, right) => right.authors.length - left.authors.length)[0];
+    const chipLabel =
+        chip === undefined ? '' : `${chip.value}${chip.authors.length > 1 ? ` ${chip.authors.length}` : ''}`;
+    const openReceipts = useCallback(() => {
+        if (message !== undefined) onOpenReceipts?.(message);
+    }, [message, onOpenReceipts]);
+    const openDetails = useCallback(
+        (event: React.MouseEvent) => {
+            event.stopPropagation();
+            if (message !== undefined) onOpenReceipts?.(message);
+        },
+        [message, onOpenReceipts],
+    );
+    const more =
+        chips.length > 1 && onOpenReceipts !== undefined ? (
+            <span
+                className='bubble__reaction-more'
+                title='Who reacted'
+                onClick={openDetails}
+            >
+                +
+            </span>
+        ) : null;
     const marginBottom = hasReaction || !isYou ? 11 : 2;
 
     const delta = now() - serverTime();
@@ -318,6 +373,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                         <Receipt
                             deliveredTs={deliveredTs}
                             seenTs={seenTs}
+                            onOpen={openReceipts}
                         />
                     </div>
                     {stuck && (
@@ -329,13 +385,24 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                             Try again?
                         </button>
                     )}
-                    {hasReaction && (
+                    {chip !== undefined ? (
                         <span
                             className='bubble__reaction'
-                            title={reactionTitle}
+                            title={chipTitle(chip.authors)}
+                            onClick={openReceipts}
                         >
-                            {message.reaction!.value}
+                            <span className='bubble__reaction-value'>{chipLabel}</span>
+                            {more}
                         </span>
+                    ) : (
+                        hasReaction && (
+                            <span
+                                className='bubble__reaction'
+                                title={reactionTitle}
+                            >
+                                {message.reaction!.value}
+                            </span>
+                        )
                     )}
                 </div>
             </div>
@@ -361,6 +428,14 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                     ref={topMarkerRef}
                     className='bubble__marker'
                 />
+                {author !== undefined && (
+                    <span
+                        className='bubble__author'
+                        onClick={openAuthor}
+                    >
+                        {author.display}
+                    </span>
+                )}
                 {replyQuote}
                 <span className='bubble__text'>{message.text}</span>
                 <div className='bubble__meta bubble__meta--peer'>
@@ -371,7 +446,16 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                         {fmtTime(messageTs)}
                     </span>
                 </div>
-                {hasReaction ? (
+                {chip !== undefined ? (
+                    <span
+                        className='bubble__reaction bubble__reaction--peer'
+                        title={chipTitle(chip.authors)}
+                        onClick={react}
+                    >
+                        <span className='bubble__reaction-value'>{chipLabel}</span>
+                        {more}
+                    </span>
+                ) : hasReaction ? (
                     <span
                         className='bubble__reaction bubble__reaction--peer'
                         title={reactionTitle}

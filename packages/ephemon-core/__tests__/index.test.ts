@@ -65,7 +65,7 @@ describe('index', () => {
                 return ConnectionState.New;
             },
             open: async () => ({}) as any,
-            send: (message: string) => {},
+            send: (message: Uint8Array) => {},
             close: () => {},
             get onProgress(): ((progress: number) => void) | undefined {
                 return undefined;
@@ -75,10 +75,10 @@ describe('index', () => {
                 return undefined;
             },
             set onStateChanged(onStateChange: ((from: ConnectionState, to: ConnectionState) => void) | undefined) {},
-            get onMessage(): ((message: string) => void) | undefined {
+            get onMessage(): ((message: Uint8Array) => void) | undefined {
                 return undefined;
             },
-            set onMessage(onMessage: ((message: string) => void) | undefined) {},
+            set onMessage(onMessage: ((message: Uint8Array) => void) | undefined) {},
         };
         expect(connection).toBeDefined();
     });

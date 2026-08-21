@@ -217,7 +217,8 @@ export function getPushService(logger: Logger, workerService: WorkerService, bas
         },
         showNotification(title: string, options?: NotificationOptions) {
             function showInternal() {
-                if (!workerService.controller?.postMessage) {
+                const worker = workerService.registration?.active ?? workerService.controller;
+                if (!worker?.postMessage) {
                     logger.warn('[push-service] Unable to show notification. Service worker is not initialized.');
                     return false;
                 }
@@ -225,7 +226,7 @@ export function getPushService(logger: Logger, workerService: WorkerService, bas
                     logger.warn('[push-service] Unable to show notification. Notifications unavailable.');
                     return false;
                 }
-                workerService.controller.postMessage({ type: 'SHOW_NOTIFICATION', title: title, options: options });
+                worker.postMessage({ type: 'SHOW_NOTIFICATION', title: title, options: options });
                 return true;
             }
 

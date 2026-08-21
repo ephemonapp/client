@@ -91,19 +91,22 @@ self.addEventListener('push', function (event) {
 });
 
 self.addEventListener('install', (event) => {
+    const replacing = self.registration.active !== null;
     event.waitUntil(
-        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
-            for (const client of windowClients) {
+        (async () => {
+            if (!replacing) return;
+            for (const client of await self.clients.matchAll({ type: 'window' })) {
                 client.postMessage({ type: 'NEW_VERSION_AVAILABLE' });
             }
-        }),
+        })(),
     );
     self.skipWaiting();
     console.log('[service-worker] Installed.');
 });
 
-self.addEventListener('activate', () => {
+self.addEventListener('activate', (event) => {
     self.skipWaiting();
+    event.waitUntil(self.clients.claim());
     console.log('[service-worker] Activated.');
 });
 

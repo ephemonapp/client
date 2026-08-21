@@ -1,16 +1,17 @@
 import { getConversationOrder, useConversationOrderRevision } from '../../../lib/connectionStore';
+import { ConversationId } from '../../../types/conversation';
 import ConversationRow, { ConversationRowData } from './ConversationRow';
 import React, { useMemo } from 'react';
 
 type ConversationListProps = {
     conversations: Array<ConversationRowData>;
-    onSelect: (id: number) => void;
+    onSelect: (id: ConversationId) => void;
 };
 
 const ConversationList: React.FC<ConversationListProps> = ({ conversations, onSelect }) => {
     const revision = useConversationOrderRevision();
     const sorted = useMemo(
-        () => [...conversations].sort((a, b) => getConversationOrder(b.publicKey) - getConversationOrder(a.publicKey)),
+        () => [...conversations].sort((a, b) => getConversationOrder(b.id) - getConversationOrder(a.id)),
         [conversations, revision],
     );
 

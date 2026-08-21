@@ -44,7 +44,7 @@ export interface Connection {
 
     open(): Promise<ConnectionInternal>;
 
-    send(message: string): void;
+    send(message: Uint8Array): void;
 
     close(): void;
 
@@ -67,15 +67,15 @@ export interface Connection {
 
     set onTransportChanged(onTransportChanged: ((transport: ConnectionTransport) => void) | undefined);
 
-    get onMessage(): ((message: string) => void) | undefined;
+    get onMessage(): ((message: Uint8Array) => void) | undefined;
 
-    set onMessage(onMessage: ((message: string) => void) | undefined);
+    set onMessage(onMessage: ((message: Uint8Array) => void) | undefined);
 }
 
 export interface ConnectionInternal {
     onProgress?: (progress: number) => void;
     onStateChanged?: (from: ConnectionState, to: ConnectionState) => void;
-    onMessage?: (message: string) => void;
+    onMessage?: (message: Uint8Array) => void;
     onTransportChanged?: (transport: ConnectionTransport) => void;
     onServerUrlChanged?: (serverUrl: string) => void;
     onError?: (error: ConnectionError) => void;
@@ -101,7 +101,7 @@ export interface ConnectionInternal {
 
     get outgoingState(): ConnectionSagaState;
 
-    send(message: string): void;
+    send(message: Uint8Array): void;
 
     openIncoming(): Promise<ConnectionInternal>;
 
@@ -167,7 +167,7 @@ export function translateConnection(connection: ConnectionInternal): Connection 
         open(): Promise<ConnectionInternal> {
             return connection.openOutgoing();
         },
-        send(message: string) {
+        send(message: Uint8Array) {
             connection.send(message);
         },
         close() {
@@ -191,10 +191,10 @@ export function translateConnection(connection: ConnectionInternal): Connection 
         set onStateChanged(onStateChange: ((from: ConnectionState, to: ConnectionState) => void) | undefined) {
             connection.onStateChanged = onStateChange;
         },
-        get onMessage(): ((message: string) => void) | undefined {
+        get onMessage(): ((message: Uint8Array) => void) | undefined {
             return connection.onMessage;
         },
-        set onMessage(onMessage: ((message: string) => void) | undefined) {
+        set onMessage(onMessage: ((message: Uint8Array) => void) | undefined) {
             connection.onMessage = onMessage;
         },
     };
@@ -293,7 +293,7 @@ export function getConnection(
         });
     }
 
-    function connectionOnMessage(message: string) {
+    function connectionOnMessage(message: Uint8Array) {
         new Promise<void>((resolve) => {
             connection.onMessage?.call(connection, message);
             resolve();
@@ -456,7 +456,7 @@ export function getConnection(
         onStateChanged: undefined,
         onMessage: undefined,
         onClosedByPeer: undefined,
-        send(message: string) {
+        send(message: Uint8Array) {
             const saga = getSaga();
             if (!saga) {
                 throw newError(logger, '[connection] Connection is not ready yet.');

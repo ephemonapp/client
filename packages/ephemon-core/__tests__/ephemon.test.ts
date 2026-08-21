@@ -191,6 +191,17 @@ describe('Ephemon', () => {
             expect(getWorkerService().controller.postMessage).not.toHaveBeenCalled();
         });
 
+        it('should notify the active worker when the controller is the one it replaced', async () => {
+            getCallService().update.mockResolvedValue({ ok: true, timestamp: 12345 });
+            const active = { postMessage: vi.fn() };
+            serviceMocks.workerServiceMock.registration = { active } as any;
+
+            await ephemonPrototype.initialize(mockConfig);
+
+            expect(active.postMessage).toHaveBeenCalledWith({ type: 'CLIENT_READY' });
+            expect(getWorkerService().controller.postMessage).not.toHaveBeenCalled();
+        });
+
         it('should not throw on a successful update call when there is no service worker controller', async () => {
             getCallService().update.mockResolvedValue({ ok: true, timestamp: 12345 });
             serviceMocks.workerServiceMock.controller = undefined as any;

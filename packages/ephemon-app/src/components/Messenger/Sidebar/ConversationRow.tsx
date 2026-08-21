@@ -7,23 +7,25 @@ import {
 import { displayName, hashColor, initials } from '../../../lib/identicon';
 import { connStatus } from '../../../lib/status';
 import { fmtTime } from '../../../lib/time';
+import { ConversationId } from '../../../types/conversation';
 import React, { useCallback } from 'react';
 
 export type ConversationRowData = {
-    id: number;
+    id: ConversationId;
+    kind: 'direct' | 'group';
     publicKey: string;
     name: string | undefined;
 };
 
 type ConversationRowProps = {
     conversation: ConversationRowData;
-    onSelect: (id: number) => void;
+    onSelect: (id: ConversationId) => void;
 };
 
 const ConversationRow: React.FC<ConversationRowProps> = ({ conversation, onSelect }) => {
-    const { state, transport, notice } = useConnectionStatus(conversation.publicKey);
-    const unread = useUnreadCount(conversation.publicKey);
-    const order = useConversationOrder(conversation.publicKey);
+    const { state, transport, notice } = useConnectionStatus(conversation.id);
+    const unread = useUnreadCount(conversation.id);
+    const order = useConversationOrder(conversation.id);
     const active = useActiveConversation() === conversation.id;
 
     const { text, color } = connStatus(state, transport, notice);
@@ -31,7 +33,7 @@ const ConversationRow: React.FC<ConversationRowProps> = ({ conversation, onSelec
 
     return (
         <div
-            className={`conv-row${active ? ' conv-row--active' : ''}`}
+            className={`conv-row${active ? ' conv-row--active' : ''}${conversation.kind === 'group' ? ' conv-row--group' : ''}`}
             onClick={select}
         >
             <div className='conv-row__bar' />

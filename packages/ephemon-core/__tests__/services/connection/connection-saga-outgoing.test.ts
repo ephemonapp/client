@@ -216,11 +216,11 @@ describe('ConnectionSaga (outgoing)', () => {
 
         expect(saga.state).toBe(ConnectionSagaState.Connected);
 
-        saga.send('test message');
+        saga.send(new Uint8Array([0, 1, 255]));
         expect(mockDataChannel.send).toHaveBeenCalled();
 
         const mockMessage = new ArrayBuffer(10);
-        let receivedMessage: string | undefined;
+        let receivedMessage: Uint8Array | undefined;
         saga.onMessage = (message) => {
             receivedMessage = message;
         };

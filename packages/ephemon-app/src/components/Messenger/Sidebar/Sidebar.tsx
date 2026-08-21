@@ -1,3 +1,4 @@
+import { ConversationId } from '../../../types/conversation';
 import { ShieldCheckIcon, PlusIcon } from '../../icons';
 import BrandHeader from './BrandHeader';
 import ConnectBlock from './ConnectBlock';
@@ -17,8 +18,11 @@ type SidebarProps = {
     showFab: boolean;
     onFab: () => void;
     conversations: Array<ConversationRowData>;
-    onSelect: (id: number) => void;
+    onSelect: (id: ConversationId) => void;
     onPrivacy: () => void;
+    onNewGroup: () => void;
+    onBlocked: () => void;
+    blockedCount: number;
 };
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -34,6 +38,9 @@ const Sidebar: React.FC<SidebarProps> = ({
     conversations,
     onSelect,
     onPrivacy,
+    onNewGroup,
+    onBlocked,
+    blockedCount,
 }) => {
     return (
         <div className={`sidebar${isMobile ? ' sidebar--mobile' : ''}`}>
@@ -48,7 +55,23 @@ const Sidebar: React.FC<SidebarProps> = ({
                 onConnect={onConnect}
                 onScan={onScan}
             />
-            <div className='sidebar__section'>Chats</div>
+            <div className='sidebar__section sidebar__section-row'>
+                Chats
+                <span>
+                    <button
+                        className='sidebar__blocked'
+                        onClick={onBlocked}
+                    >
+                        Blocked{blockedCount > 0 ? ` (${blockedCount})` : ''}
+                    </button>
+                    <button
+                        className='sidebar__new-group'
+                        onClick={onNewGroup}
+                    >
+                        New group
+                    </button>
+                </span>
+            </div>
             <ConversationList
                 conversations={conversations}
                 onSelect={onSelect}

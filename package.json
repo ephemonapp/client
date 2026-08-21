@@ -1,6 +1,6 @@
 {
     "name": "@ephemon/client",
-    "version": "0.6.0",
+    "version": "0.7.0",
     "description": "Ephemon Messenger SDK -- Beta 0.0.1",
     "repository": {
         "type": "git",
@@ -21,6 +21,8 @@
         "publish:oss": "npm run prettify && npm run publish:oss --workspace=@ephemon/app && npm run coverage:generate && npm run coverage:copy",
         "audit:renders": "npm run audit:renders --workspace=@ephemon/app",
         "analyze": "npm run analyze --workspace=@ephemon/app",
+        "mls:build": "sh scripts/build-mls-wasm.sh",
+        "mls:test:browser": "node scripts/test-mls-wasm-browser.mjs",
         "coverage:generate": "cd packages/ephemon-core && npm run test:coverage && cd ../..",
         "coverage:copy": "rm -rf packages/ephemon-core/coverage/lcov-report && mkdir -p packages/ephemon-app/dist/coverage && cp -r packages/ephemon-core/coverage/. packages/ephemon-app/dist/coverage/"
     },

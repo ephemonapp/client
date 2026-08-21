@@ -1,3 +1,4 @@
+import { ConversationId } from '../types/conversation';
 import { createKeyedStore, shallowEqual } from './keyedStore';
 import { ConnectionNotice } from './notice';
 import { UiConnectionState, UiTransport } from './status';
@@ -11,39 +12,39 @@ export type ConnectionStatus = {
 
 const CLOSED: ConnectionStatus = { state: 'closed', transport: undefined, notice: undefined };
 
-const statuses = createKeyedStore<ConnectionStatus>(CLOSED, shallowEqual);
-const progresses = createKeyedStore<number>(0);
-const unreads = createKeyedStore<number>(0);
-const orders = createKeyedStore<number>(0);
+const statuses = createKeyedStore<ConnectionStatus, ConversationId>(CLOSED, shallowEqual);
+const progresses = createKeyedStore<number, ConversationId>(0);
+const unreads = createKeyedStore<number, ConversationId>(0);
+const orders = createKeyedStore<number, ConversationId>(0);
 
 let orderRevision = 0;
 const orderRevisionListeners = new Set<() => void>();
 
-export function setConnectionState(publicKey: string, state: UiConnectionState): void {
-    statuses.update(publicKey, (previous) => ({
+export function setConnectionState(conversationId: ConversationId, state: UiConnectionState): void {
+    statuses.update(conversationId, (previous) => ({
         ...previous,
         state,
         notice: state === 'open' || state === 'degraded' ? undefined : previous.notice,
     }));
 }
 
-export function setConnectionNotice(publicKey: string, notice: ConnectionNotice | undefined): void {
-    statuses.update(publicKey, (previous) => ({ ...previous, notice }));
+export function setConnectionNotice(conversationId: ConversationId, notice: ConnectionNotice | undefined): void {
+    statuses.update(conversationId, (previous) => ({ ...previous, notice }));
 }
 
-export function setConnectionTransport(publicKey: string, transport: UiTransport | undefined): void {
-    statuses.update(publicKey, (previous) => ({ ...previous, transport }));
+export function setConnectionTransport(conversationId: ConversationId, transport: UiTransport | undefined): void {
+    statuses.update(conversationId, (previous) => ({ ...previous, transport }));
 }
 
-export function setConnectionProgress(publicKey: string, progress: number): void {
-    progresses.set(publicKey, progress);
+export function setConnectionProgress(conversationId: ConversationId, progress: number): void {
+    progresses.set(conversationId, progress);
 }
 
-export function setUnreadCount(publicKey: string, unread: number): void {
-    unreads.set(publicKey, unread);
+export function setUnreadCount(conversationId: ConversationId, unread: number): void {
+    unreads.set(conversationId, unread);
 }
 
-const orderValues = new Map<string, number>();
+const orderValues = new Map<ConversationId, number>();
 let orderSequence = '';
 
 function refreshOrderSequence(): void {
@@ -59,30 +60,30 @@ function refreshOrderSequence(): void {
     }
 }
 
-export function setConversationOrder(publicKey: string, order: number): void {
-    if (orderValues.get(publicKey) === order) return;
-    orderValues.set(publicKey, order);
-    orders.set(publicKey, order);
+export function setConversationOrder(conversationId: ConversationId, order: number): void {
+    if (orderValues.get(conversationId) === order) return;
+    orderValues.set(conversationId, order);
+    orders.set(conversationId, order);
     refreshOrderSequence();
 }
 
-export function getConversationOrder(publicKey: string): number {
-    return orders.get(publicKey);
+export function getConversationOrder(conversationId: ConversationId): number {
+    return orders.get(conversationId);
 }
 
-export function forgetConnection(publicKey: string): void {
-    statuses.remove(publicKey);
-    progresses.remove(publicKey);
-    unreads.remove(publicKey);
-    orders.remove(publicKey);
-    orderValues.delete(publicKey);
+export function forgetConversation(conversationId: ConversationId): void {
+    statuses.remove(conversationId);
+    progresses.remove(conversationId);
+    unreads.remove(conversationId);
+    orders.remove(conversationId);
+    orderValues.delete(conversationId);
     refreshOrderSequence();
 }
 
-let activeConversation: number | undefined;
+let activeConversation: ConversationId | undefined;
 const activeConversationListeners = new Set<() => void>();
 
-export function setActiveConversation(id: number | undefined): void {
+export function setActiveConversation(id: ConversationId | undefined): void {
     if (activeConversation === id) return;
     activeConversation = id;
     for (const listener of activeConversationListeners) {
@@ -90,7 +91,7 @@ export function setActiveConversation(id: number | undefined): void {
     }
 }
 
-export function getActiveConversation(): number | undefined {
+export function getActiveConversation(): ConversationId | undefined {
     return activeConversation;
 }
 
@@ -101,39 +102,39 @@ export function subscribeActiveConversation(listener: () => void): () => void {
     };
 }
 
-export function useActiveConversation(): number | undefined {
+export function useActiveConversation(): ConversationId | undefined {
     return useSyncExternalStore(subscribeActiveConversation, getActiveConversation);
 }
 
-export function useConnectionStatus(publicKey: string): ConnectionStatus {
+export function useConnectionStatus(conversationId: ConversationId): ConnectionStatus {
     return useSyncExternalStore(
-        (listener) => statuses.subscribe(publicKey, listener),
-        () => statuses.get(publicKey),
+        (listener) => statuses.subscribe(conversationId, listener),
+        () => statuses.get(conversationId),
     );
 }
 
-export function useConnectionNotice(publicKey: string): ConnectionNotice | undefined {
-    return useConnectionStatus(publicKey).notice;
+export function useConnectionNotice(conversationId: ConversationId): ConnectionNotice | undefined {
+    return useConnectionStatus(conversationId).notice;
 }
 
-export function useConnectionProgress(publicKey: string): number {
+export function useConnectionProgress(conversationId: ConversationId): number {
     return useSyncExternalStore(
-        (listener) => progresses.subscribe(publicKey, listener),
-        () => progresses.get(publicKey),
+        (listener) => progresses.subscribe(conversationId, listener),
+        () => progresses.get(conversationId),
     );
 }
 
-export function useUnreadCount(publicKey: string): number {
+export function useUnreadCount(conversationId: ConversationId): number {
     return useSyncExternalStore(
-        (listener) => unreads.subscribe(publicKey, listener),
-        () => unreads.get(publicKey),
+        (listener) => unreads.subscribe(conversationId, listener),
+        () => unreads.get(conversationId),
     );
 }
 
-export function useConversationOrder(publicKey: string): number {
+export function useConversationOrder(conversationId: ConversationId): number {
     return useSyncExternalStore(
-        (listener) => orders.subscribe(publicKey, listener),
-        () => orders.get(publicKey),
+        (listener) => orders.subscribe(conversationId, listener),
+        () => orders.get(conversationId),
     );
 }
 
