@@ -19,7 +19,7 @@
         "react": "^19.2.8",
         "react-dom": "^19.2.8",
         "react-zxing": "^3.0.0",
-        "virtua": "^0.50.5"
+        "virtua": "^0.51.0"
     },
     "devDependencies": {
         "@ephemon/core": "file:../ephemon-core",
