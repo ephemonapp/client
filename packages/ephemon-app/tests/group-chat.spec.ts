@@ -27,6 +27,8 @@ test('a group is created from contacts and carries messages between its members'
         await expect(carol.peerBubble(toCarol)).toHaveCount(1);
 
         await alice.createGroupFromSidebar([bob.publicKey, carol.publicKey], 'Alice');
+        await bob.acceptGroupInvite();
+        await carol.acceptGroupInvite();
         await expect(alice.groupRow).toHaveCount(1);
         await expect(bob.groupRow).toHaveCount(1);
         await expect(carol.groupRow).toHaveCount(1);
@@ -65,9 +67,7 @@ test('a group is created from contacts and carries messages between its members'
         await expect(carol.authorLine('Bob')).toHaveCount(1);
         await expect(bob.peerBubble(fromCarol)).toHaveCount(1);
 
-        await alice.page.reload({ waitUntil: 'domcontentloaded' });
-        await alice.page.waitForSelector('.lock__card');
-        await alice.unlock(alicePassword);
+        await alice.restart(alicePassword);
         await alice.selectGroup();
         await alice.reconnectFromKebab();
         await alice.waitForConnected();

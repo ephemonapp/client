@@ -2020,3 +2020,387 @@ observer's composer looking the way it behaves.
 ```
 28 functional specs passed; core suite 418 tests; prettier --check clean
 ```
+
+## 2026-08-22 — Review rounds: what the reviewers found and what it cost
+
+Two `/code-review` rounds, a five-dimension multi-agent audit and a security pass, each finding adversarially verified
+before anything was changed.
+
+**Confirmed and fixed.** A member could bypass the owner-only commit policy with an RFC 9420 external commit:
+`process_incoming_commit` derived the authorising identity from the credential without constraining the sender type, and
+for an external sender OpenMLS reads that credential out of the message. `PURE_CIPHERTEXT` does not block it, external
+commits may carry inline Removes, and the resulting leaf keeps the claimed member number — so a member could present
+itself as the owner and evict the real one. The facade now refuses any sender that is not `Sender::Member`.
+
+Pre-join history was served to a member that had not joined yet: the join-epoch gate was keyed on a locator the member
+asserts about itself, and an unknown join epoch skipped the filter entirely. It is keyed on the authenticated member
+number now, an unknown join epoch means "arrived now", the creator and both sides of a direct chat are stamped from
+their first epoch, a commit stamps the members it added, and `pushOwnRecent` goes link by link so a broadcast cannot
+carry what one of the links may not read.
+
+A roster locator carried dial rights: `_initConnections` created a core Connection for every roster entry, and the core
+prompts only when it holds none — so a peer-supplied locator got promptless inbound access, and one that never raises
+the dial modal could never be blocked. Startup now grants that only to locators this device has already accepted, read
+from the rows being restored rather than from the conversation list, which is empty at that point -- the first version
+of this fix read the list and silently created no group transports at all.
+
+A `member.profile` event could re-point an established roster locator, which chose whose signalling server this device
+uses for an unrelated contact and whose name a message renders under. A profile may now fill a locator the roster does
+not have; it may not change one. Blocking now drops the core connection, at block time and when the blocklist finishes
+loading, and a group event from a blocked member is refused at delivery — relayed by another member, it never touched a
+transport of its own.
+
+The frontier hole scan walked the integers between held sequences, so one event claiming sequence 9e15 was an
+unbreakable main-thread loop, persisted and re-entered on every launch. It reads the gaps off the sorted positions now.
+`chatStore.apply` no longer re-sorts history or double-notifies for a receipt, `clearHistory` records what it actually
+deleted, and one decoder builds the membership all four restore paths used to build by hand.
+
+**Two specs were measuring nothing.** `blocked.spec.ts` never dialled while blocked, so deleting the refusal left the
+suite green; it now dials and asserts no prompt appears. `group-epoch-catchup.spec.ts` had a tautology where a real
+precondition belonged, and asserting on a `logger.debug` line was worse than nothing because the console level is `info`
+— it asserts on the owner's commit rows in the vault instead.
+
+**Left open, needing a decision.** The member number is self-asserted: `stage_add_member` never compares the key package
+credential against the number the inviter assigned, and commit policy is decided on that number, so a joiner that calls
+`initialize(id, 0)` is accepted as the owner. Per-author event signatures do not exist, so a member can still forge
+another member's authorship. `peerMemberNumber` lies in any group above two members. A first-claim locator in a profile
+is still trusted. All four cross the wasm boundary, the persisted shape or what the protocol accepts.
+
+```
+28 functional specs, 65 app unit tests, 418 core tests, MLS wasm harness; prettier and tsc clean
+```
+
+## 2026-08-22 — What a wipeable database unblocked
+
+With a database wipe acceptable, the items parked behind "needs a migration" landed.
+
+The vault stored MLS state as a JSON array of numbers. A group state of 8780 bytes became 31 388 bytes of JSON before
+padding and AES-GCM — 3.57x — and that happened on the main thread for every authored and every received event, typing
+indicators and receipts included. Checkpoints and commit rows are framed with the same byte codec the MLS wire uses now,
+so the write is the payload plus twenty bytes. The vault grew an `encryptBytes`/`decryptBytes` pair; the JSON pair stays
+for structured records.
+
+`peerMemberNumber` is gone. It was a two-party field that a group of three could not honour: it named the owner, so a
+reply's quoted author came out as the owner, and the frontier roster fell back to a duplicated entry. The one other
+member of a pair is derived from the roster where it is actually needed, and a quote whose author cannot be resolved is
+now dropped rather than attributed to whoever was convenient -- a wrong attribution is worse than a missing quote.
+
+`protocol` is gone as well: a persisted field with twelve mentions and one read, whose two branches answered the same
+way. `ChatAuthorFrontier.highest` is encoded now, so a decoded frontier no longer fabricates it, and a frontier claiming
+a highest below its own contiguous run is refused.
+
+The invitee's member number is bound to what the inviter assigned: `stage_add_member` compares the key package's
+credential against the expected number and refuses a number already present in the group. That closes the path where a
+joiner calling `initialize(id, 0)` was accepted as the owner by everyone -- but it closes it in the wrong layer, which
+D-015 now records: the facade is to hand the app authenticated facts, and the app is to decide. The guard stays until it
+moves.
+
+```
+28 functional specs, 68 app unit tests, 418 core tests, MLS wasm harness; prettier and tsc clean
+```
+
+## 2026-08-30 — Round five of the review loop
+
+Fourteen findings came back. Six the reviewer applied, six more I took, two I left with a reason.
+
+The frontier could lose messages for good. `computeChatFrontier` truncates its hole list at 64 ranges, but it kept
+advertising the true `highest` above them, and `missingForPeer` starts its tail request at the peer's `highest + 1` --
+so every gap past the sixty-fourth was invisible to the sender and to every later exchange. A truncated frontier now
+stops claiming what it could not describe: `highest` drops to the last sequence it accounted for, the peer resends from
+there, and the run converges over a couple of exchanges. Two tests cover it, one of which fails on the old code.
+`ChatAuthorFrontier.head` went the other way: encoded and decoded on every inventory exchange, read by nobody. Gone,
+along with the per-author hash map that fed it.
+
+A retransmitted key package could deadlock an invite. The owner marked itself staged before the commit existed, so a
+second key package arriving during staging was dropped and the invitee waited for a frame nobody would send. Staging is
+one shared promise now; a repeat joins it, and a repeat after it resolves gets the frame back.
+
+An anonymous member was sending delivered receipts while the form promised silence. The receipts are withheld until the
+member picks a name and then flushed, so the promise is now true rather than nearly true. The copy was overstated too --
+the group learns a member joined the moment the owner commits, which no form can hide -- so it says what actually holds.
+
+Render budgets caught two things worth having. `clearedFrontier` is protocol bookkeeping and lived in the conversation
+list, so clearing a chat re-rendered the sidebar; it moved to a ref that persists with the row. `patchConversation` and
+`persistMlsRoster` rewrote the list and the vault row even when nothing had changed, and the sidebar re-rendered for
+fields it does not display -- a no-op guard on both, and a stable projection of the four fields a row shows.
+
+`waitForRenderQuiet` treated a page mid-navigation as quiet: its `seen` started at the same `-1` the helper returns when
+the execution context is gone, so the first poll during a reload ended the wait and the reset-device step measured
+nothing. That is the flake that made the audit fail about a third of the time.
+
+The worker loaded the wasm bindings before every command to have them ready for a rollback that almost never happens;
+they load on the rollback path now. `clearPendingCommit` lost its last caller when the invite path moved to the staging
+veto, so the command is gone from the client, the protocol, the worker, the bindings and the facade.
+
+The wasm artifact and the Rust source have drifted: the facade declares ABI 4, the built module answers 3, and the
+browser harness compared it against a hardcoded 3 -- so nothing noticed. The harness reads the version out of `lib.rs`
+now and fails loudly until the module is rebuilt.
+
+```
+29 functional specs, 93 app unit tests in three timezones, 418 core tests; prettier and tsc clean
+Rust unverified: the facade edits (single-pass `added`, dropped `clear_pending_commit`) need a Docker build
+```
+
+## 2026-08-30 — Round six
+
+Fifteen findings. Seven the reviewer applied -- a deleted conversation left its cleared frontier behind for the next
+chat to inherit the same id, the owner's invite session was never retired so it short-circuited every later reconcile
+with that member, group conversations were starting the two-party bootstrap on reconnect, the restore-time rekey ran
+outside the commit lock, commit frames skipped the routing-ID check that application frames get, `pendingInvites` was
+state nobody read, and every frame was being copied twice on send for a mutation nacl does not perform.
+
+Five more I took. The one that stings: last round I wrote that an un-introduced member emits nothing, and it still
+broadcast its inventory on every link that opened -- withholding receipts closed the small hole and left the loud one.
+An anonymous member now reconciles nothing at all, so the form's promise is the whole behaviour rather than most of it.
+
+`patchConversation` and `_upsertConnection` wrote to the vault from inside a `setConversations` updater, which React
+runs twice under StrictMode and may discard entirely under concurrent rendering. Both compute from the conversation ref
+now and persist outside; every call site that changes the list keeps the ref authoritative, which the group-creation
+path was already doing.
+
+`waitForDirectMls` could park a waiter that nothing would ever settle: a group conversation created from an `invite`
+frame has no stored bootstrap, and if an application frame arrived before the join finished, no bootstrap was started
+and the promise -- with the message handler awaiting it -- leaked for the life of the tab. That case throws now and the
+frame is dropped.
+
+`getAll` did not check that a decrypted row's id matches its key, though `get` did; the blocked list and the
+conversation restore both read through `getAll`. And the restore-time rekey wrote a zero-length commit authenticator
+that `encodeCommitHead` would refuse, duplicating `recordCommit` to do it -- it calls `recordCommit` now.
+
+Left open: the forgeable author. `acceptChatEvent` still trusts a durable event's self-declared author when it differs
+from the authenticated MLS sender, and verifying the per-author hash chain would not close it, since every member sees
+every event and therefore knows the chain head. Per-author signatures over the event bytes would, and that is a wire
+change waiting on a decision.
+
+```
+29 functional specs, 93 app unit tests in three timezones, 418 core tests; prettier and tsc clean
+Rust still unverified: no Docker, and the built wasm answers ABI 3 against a facade that declares 4
+```
+
+## 2026-08-30 — The frame nobody replayed
+
+Chasing a render-audit failure that only appeared when the audit ran twice turned up a hang, not a render problem: a
+direct conversation deleted and dialled again would swallow the next message with no error anywhere.
+
+`DirectMlsBootstrapSession` says of itself that lost delivery is recovered by replaying the last frame, and it does --
+but only when a `hello` arrives from the peer. The creator answers a re-dial by building `initialize` and sending it
+into a link that is still connecting, where the send closure drops it; from then on the creator holds a companion it
+will replay only on a `hello`, and the invitee, having no companion of its own, answers a `hello` with silence. Neither
+side speaks again. The send that triggered all this waits on a promise that will never settle, and `chat.send.text`'s
+rejection handler never runs because nothing rejects -- the message simply never appears.
+
+`linkOpened` replays the companion now rather than sending a bare `hello`, which is what the class already claimed to
+do. Two smaller changes make the recovery reachable: a live transition always calls `linkOpened` instead of only a
+transition out of a non-live state, and `waitForDirectMls` calls it when it finds itself waiting on a live link -- so a
+stalled handshake heals the moment the user tries to send.
+
+`redial.spec.ts` covers it: delete, dial again, send. Before the fix it failed every run; after it, the whole flow takes
+eight seconds instead of timing out at thirty-eight.
+
+The render audit had been catching this for two rounds and I read it as a budget problem twice before looking at what
+the step was actually doing.
+
+## 2026-09-01 — Round seven
+
+Eleven findings, seven applied by the reviewer: an observer tab could still delete a conversation and write a stale MLS
+row over the writer's, a self-chat could never take a reaction back or stop re-sending `seen` (both because
+`ownMemberNumber` is undefined there and the guards short-circuited on it rather than using the documented no-member
+fallback), a 1:1 reaction tooltip leaked `Member 1` where it used to read a time, `syncTail` had lost a dependency it
+now closes over, the legacy single-reaction render branches had become unreachable, and a reply target was carrying its
+`scrollToReply` closure into the persisted record -- where `JSON.stringify` silently dropped it, so memory and vault
+disagreed about the record's shape.
+
+The observer fix needed finishing. Guarding the write path stops the corruption but leaves the kebab offering Delete
+chat, Clear history and Rename contact in a tab that will silently ignore all three; an affordance that does nothing is
+its own defect. The header takes `readOnly` now and does not draw them, and `single-writer.spec.ts` asserts their
+absence.
+
+Two of the four skipped findings were the same shape as the bootstrap deadlock. `MlsInviteOwnerSession.invite()` fired
+once per session, so an invitee that was offline when the frame went out had nothing to wake it: re-adding the same
+contact allocated a _second_ member number for it and promised a number the first invite frame had already promised.
+`invite()` replays on every call now, the owner retires the invite session once the peer is seated in the roster, and
+`addConversationMember` drives the pending invite instead of reserving again.
+
+`reconcile` chained a full pass per transport event -- ten of them for a five-member group coming online, each a commit
+tail, a profile, twenty pushed records and an inventory, every one a storage snapshot and an encrypted checkpoint write.
+Transport churn now collapses into the pass in flight plus at most one more.
+
+The orphan-receipt map is bounded at 256 targets. A receipt for a message that was cleared, or withheld by the
+join-epoch filter, used to be held and re-hydrated for the life of the conversation.
+
+`clear()` was declared async and awaited nothing, so the UI saw success before the vault write ran and could never see
+it fail. The persistence queue exposes the write in flight and `clear()` awaits it.
+
+```
+30 functional specs, 93 app unit tests in three timezones, 418 core tests; prettier and tsc clean
+Rust still unverified: no Docker, and the built wasm answers ABI 3 against a facade that declares 4
+```
+
+## 2026-09-01 — Round eight
+
+Fifteen findings, eight applied by the reviewer: a late reaction overwrote a newer one (`withReceipt` compared
+timestamps, `withReaction` did not), a joiner that failed to build its key package could never build one again, the
+limited branch of `getMlsCommits` never settled on an aborted transaction -- which deadlocks group sending through
+`reconcile` -- a date separator went stale across midnight, receipt rows collided on the empty locator, `serverTime()`
+could hand a fractional value to encoders that now reject it, and the checkpoint blob was copied three times per read.
+
+Five of the seven it left I took.
+
+`clampOwnAuthorFrontier` was hiding a lost message forever. It raised this member's own contiguous run to its chain head
+whenever the run was behind and there were no holes above it -- which is exactly the shape of a tail that never reached
+the store, because the chain position is persisted with the MLS checkpoint before the record is. Peers computing
+`missingForPeer` were then told we held it, so nobody pushed it back. It now clamps only when this member holds none of
+its own events at all, which is the case the function was written for; a partial loss stays visible and repairs itself.
+
+An `invite` frame with an unknown routing ID created and persisted a group conversation before any check. Any peer whose
+dial was once accepted could write N conversations into the vault and the sidebar, and `isBlocked` was never consulted
+in `handleConnectionMessage` at all. An invite is now refused unless it comes from an unblocked peer this device already
+has a direct conversation with, which is the precondition D-011 already states.
+
+The migration chain was renamed, so on a vault written before MLS the new ids run, only create stores, and leave pre-MLS
+message rows in place -- where `ingest` files each one as a receipt with no target and re-persists it on every hydrate.
+D-010 says such a vault is replaced. `004_replace_legacy_vault` drops the abandoned `cache` store and, when it finds a
+legacy migration id, clears the message store. A vault written by this branch is untouched.
+
+The `{ kind: 'delete' }` mutation was never emitted, so the `deletes` parameter threaded through the store, the chat
+hook, the callbacks contract, the hook API and `putMessages` -- with the index bookkeeping behind it -- was unreachable.
+Gone, and the dirty queue is a set again.
+
+D-013 says a group author's name is "always shown next to the member number the MLS sender check produced". Only the
+name was shown, so a member could take another's name and be visually indistinguishable. The bubble shows both now.
+
+Left open and reported: the forged-authorship gap (below), a duplicate row per undecryptable message (the only real fix
+is destructive), and a rate limit on group creation (a policy number, not a defect).
+
+**The forgery gap is the one thing on this branch that its own decisions claim is impossible and is not.**
+`acceptChatEvent` takes the writer from the event's self-declared `author` when it differs from the authenticated MLS
+sender, checking only that the claim names a roster member. It cannot do better: anti-entropy re-encrypts a stored event
+under the _serving_ member's key so that a member who joined later can receive older events, so `sender != author` is
+ordinary on the catch-up path and indistinguishable from a fabrication. D-005 promises an authenticated append-only
+chain per member and D-012 promises that a relaying member cannot alter what it passes on; neither holds. Verifying the
+hash chain does not help, because every member sees every event and therefore knows any author's chain head. What closes
+it is a per-author signature over the event bytes, verified against that member's signature public key from the MLS leaf
+-- a wire-format change, and one that needs the facade to expose a sign and a per-member public key read.
+
+## 2026-09-01 — Round nine, and the harness that could not run
+
+Fifteen findings, seven applied by the reviewer. The one worth naming: the persistence queue could strand its last
+batch, because `drain()` returned the already-settled promise it had not yet cleared, so the final message of a session
+was never written.
+
+Five of the skipped ones I took. `getAll` threw on the first row whose envelope id disagreed with its key -- my own
+regression from round six, and a bad one: `_initConnections` swallows the rejection, so a single corrupt row would show
+the user an empty app with no way back. It skips and logs now, which is what `getMessages` and `getMlsCommits` already
+did. Blocking a peer deleted it from the core but left its link in the transport registry, so `usableTransports` kept
+reporting it as open and sends went into a dead channel while the group looked healthy. A cleared reaction left no
+record that it had been cleared, so a replayed older pick brought it back -- it is kept as an empty tombstone now.
+`useConversationRows` wrote a ref during render; it keys a memo on a signature of the displayed fields instead. And
+`tsconfig.spec.json` was wired to nothing, so `npm test` never type-checked the test tree; it runs first now.
+
+I disagreed with two. `clearHistory` records `highest` rather than `contiguous`: the reviewer is right that sequences
+inside holes are then marked cleared and never backfilled, but `contiguous` means everything above the contiguous run
+comes back from peers, so the clear does not hold -- and a user who clears a conversation is deleting it, holes
+included. And I left `inspect` failing loudly rather than restoring its partial degradation: an `ownCommitHead` that
+returns undefined because reading the authenticator quietly failed is how a week-long bug starts.
+
+Then Docker came back, and the wasm work found something worse than a stale artifact. The facade declared ABI 4 while
+the built module answered 3, and the browser harness compared the module against a hardcoded 3 -- so it agreed with
+itself and never noticed. Once the harness read the version out of `lib.rs` it failed, and once past that it turned out
+the harness had not been runnable at all since the D-015 rewrite: it called `memberNumbers()`, `exportCheckpoint()` and
+`importCheckpoint()`, constructed a client from a number rather than identity bytes, read `senderMemberNumber`, and sent
+the worker `memberNumber` instead of `identity`. The only coverage that runs real wasm in a real browser had been dead
+for rounds, and the constant that was supposed to catch exactly that was the thing hiding it.
+
+## 2026-09-01 — D-016: an event carries its author's signature
+
+The facade gained three passthroughs and no policy: `sign` over the caller's bytes under a fixed label with a length
+prefix, `verify` against a given public key, and `member_signature_keys` beside `member_identities`. Pairing a member
+number to a key is the app's job, as D-015 requires. Two cargo tests cover it: a signature verifies for its author and
+its bytes and for nothing else, and it does not verify when the label is stripped -- so the exposed signing primitive
+cannot be made to produce anything an MLS peer would read as protocol traffic.
+
+An event now travels as `variable(bytes) + variable(signature)`. What is signed is exactly the canonical event encoding,
+so the event hash and id stay defined over the inner bytes and do not depend on the envelope. Ephemeral events carry an
+empty signature; a durable event without one is refused, and so is an ephemeral event with one.
+
+The part that matters for catch-up: a stored record keeps the whole envelope rather than the inner bytes. Re-serving an
+event under the serving member's key is the case MLS's sender check structurally cannot cover, and it is the case the
+signature exists for -- storing the inner bytes would have thrown the signature away exactly where it is needed.
+
+`MlsWorkerClient` caches the roster's signature keys and drops the cache on every mutation and every reload, so
+verification costs one worker round trip in the steady state rather than two.
+
+The ABI constant now lives in two places, `lib.rs` and `protocol.ts`. The harness reads the Rust one, so a divergence
+fails loudly instead of agreeing with itself.
+
+## 2026-09-01 — What the signature cost, and what it did not
+
+The signature landed and the functional suite started timing out. It was tempting to blame the machine, which was
+genuinely loaded, and I nearly did: individual specs ran at their usual times, and the failures rotated between
+unrelated specs. The tell was that they only rotated among the _event-heavy_ ones. `group-chat`, which sends two
+messages, held its sixteen seconds; `group-mesh` went from twenty-seven seconds to three minutes and `clear-history`
+timed out.
+
+The key cache was cleared on every mutation, and receiving a message is a mutation. So every inbound event paid two
+extra worker round trips -- an `inspect` to refill the cache, then the `verify` -- and `inspect` serializes the roster
+twice per call. A member's signature key cannot move because someone sent a message, only because the roster changed, so
+the cache is now dropped only for the commands that can change it. Both specs went back to twenty-two and twenty-eight
+seconds.
+
+One hypothesis was worth more than the fix: if an MLS rekey rotated the leaf signature key, every event signed before it
+would become unverifiable, and re-serving history -- the exact case the signature exists for -- would be poisoned
+permanently. A cargo test settles it: the facade holds one `SignatureKeyPair` for the client's life, and a self-update
+does not touch it. The test stays, named for the invariant rather than the mechanism, so that anyone who later makes the
+key rotate is told what it breaks.
+
+`cargo fmt` also reported that `lib.rs` had drifted out of canonical formatting during the review rounds -- 483 lines of
+it. Formatted, rebuilt, and the harness re-run so the artifact matches the source it was built from.
+
+## 2026-09-02 — Round ten, and two premises that were wrong
+
+Fifteen findings, reported only. Six of them were defects worth fixing, and two of my own answers turned out to be wrong
+in a way no reviewer had named.
+
+The first was a clock. `reindex` shifted every message timestamp by `now() - serverTime()` before deciding which
+calendar day it belonged to, and `MessageBubble` did the same before formatting a time. A timestamp is an absolute
+instant and a calendar day is a property of the device's timezone; the difference between the device clock and the
+server clock has nothing to do with either. Applying it moved messages across midnight by the skew and displayed every
+time off by it. The correction is gone from both places. The `Math.max(0, localDay - delta)` clamp I had added rounds
+earlier -- to stop a crash east of UTC when 13 tests went red -- was papering over exactly this: I fixed the symptom and
+kept the wrong premise, and it survived several review rounds because reviewers read the diff, not the premise. What
+remains is a clamp on the separator _id_ only, because local midnight is legitimately negative east of UTC inside the
+first day of the epoch and the id format refuses negatives.
+
+The second was the word "loudly". I had defended failing an `inspect` outright, against a reviewer who wanted the
+partial answer back, on the grounds that a silent partial read is worse. Tracing where the rejection actually goes:
+`reconcile(id).catch(logger.error)` -- a console line; `recordCommit(...).catch(logger.error)` -- a console line;
+`chat.send.text(text).catch(() => {})` -- nothing at all. Both variants were equally silent to the user: the group
+quietly stops serving and asking for history and no error appears anywhere. The argument was hollow. The notice
+mechanism already existed but was gated on a broken link, and a catch-up fails on a healthy one, so a `sync-failed` code
+was added, the gate lifted for it, and `reconcile` now raises and clears it. The failure reaches the user, which is what
+made the original question decidable.
+
+The projection over the conversation list went the same way. `useConversationRows` kept one array identity per set of
+displayed values so that protocol-only changes would stop redrawing the sidebar -- a patch over protocol state and
+presentation living in one array. `mlsBootstrap` now lives in a ref that persists with the row, and the list carries
+`group?: { owner, ownMemberNumber, members }`: only what is rendered. The projection is gone, and removing it
+immediately showed what it had been covering -- a direct conversation was also being handed a "group presentation" and
+redrawing the sidebar when its own MLS bootstrap completed. A presentation is published for groups only, and the render
+audit passes without the projection, which is the proof that the split is real rather than moved.
+
+The rest: one Connection carries a direct conversation and every group riding on that peer, but `onError`,
+`onClosedByPeer` and `onServerUrlChanged` were bound to whichever conversation bound them last -- so an explicit peer
+close on a direct chat did nothing once a group had been created on that transport. A group member's transport
+reconnecting called `setActiveConversation`, throwing the user out of whatever they were reading. The invite session
+recorded its roster only after telling the members, so a failed send left the owner's roster permanently stale while
+retries replayed the invitation and stopped. The reaction chip broke ties toward the oldest pick, so in a 1:1 chat your
+own earlier reaction hid the peer's newer one. A frontier decoder that checked hole ordering but not that a hole lies
+below the head the peer claims -- one hole reaching to `MAX_SAFE_INTEGER` and the local member re-encrypts and re-sends
+its entire history on every exchange. Encrypting an event mutates the group, and it ran outside the commit queue, so an
+inventory arriving mid-membership-change hit a staged commit and lost that catch-up round. The invite roster dropped
+member names, which is the first frame the group name divergence came from. And a member seated by a commit has no
+locator yet, so its author label opened a QR over an empty key.
+
+```
+30 functional specs, 102 app unit tests in three timezones, 418 core tests, 11 cargo tests, MLS wasm harness at ABI 5
+```

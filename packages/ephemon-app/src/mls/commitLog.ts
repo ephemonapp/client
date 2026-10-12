@@ -1,5 +1,5 @@
 import { StoredMlsCommit } from '../utils/database';
-import { Reader, Writer } from './byteCodec';
+import { Reader, sameBytes, Writer } from './byteCodec';
 
 export const COMMIT_AUTHENTICATOR_BYTES = 32;
 
@@ -11,14 +11,6 @@ export type CommitHead = {
 export type HeadRelation = 'equal' | 'ahead' | 'behind' | 'fork';
 
 const HEAD_LABEL = 'MLS commit head';
-
-function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
-    return left.byteLength === right.byteLength && left.every((value, index) => value === right[index]);
-}
-
-export function sameHead(left: CommitHead, right: CommitHead): boolean {
-    return left.epoch === right.epoch && sameBytes(left.authenticator, right.authenticator);
-}
 
 /** Equal epoch with a different authenticator is a fork; a higher remote epoch only means this side is behind. */
 export function relateHeads(own: CommitHead, peer: CommitHead): HeadRelation {

@@ -21,6 +21,8 @@ test('a group carries the same name on every side and counts unread per member',
         await peer2.waitForConnected();
 
         await master.createGroupFromSidebar([peer1.publicKey, peer2.publicKey], 'Master');
+        await peer1.acceptGroupInvite();
+        await peer2.acceptGroupInvite();
         for (const app of [master, peer1, peer2]) await expect(app.groupRow).toHaveCount(1);
 
         await expect(peer1.groupName).toHaveText('Master');
@@ -37,12 +39,9 @@ test('a group carries the same name on every side and counts unread per member',
         const receipt = master.ownBubble(said).locator('.bubble__receipt');
         await expect(receipt).toHaveAttribute('title', /Seen/);
 
-        await peer2.page.reload({ waitUntil: 'domcontentloaded' });
-        await peer2.page.waitForSelector('.lock__card');
-        await peer2.unlock(PASSWORDS.peer2);
+        await peer2.restart(PASSWORDS.peer2);
         await expect(peer2.groupUnread).toHaveText('1');
 
-        // A member that never introduced itself gets the form, so the count only clears once it joins for real.
         await peer2.selectGroup();
         await expect(peer2.introduceForm).toBeVisible();
         await expect(peer2.groupUnread).toHaveText('1');

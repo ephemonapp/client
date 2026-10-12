@@ -10,6 +10,8 @@ type ChatHeaderProps = {
     name: string | undefined;
     publicKey: string;
     group: boolean;
+    canAddMember: boolean;
+    readOnly: boolean;
     isMobile: boolean;
     onMemberName: () => void;
     onBack: () => void;
@@ -26,6 +28,8 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
     name,
     publicKey,
     group,
+    canAddMember,
+    readOnly,
     isMobile,
     onMemberName,
     onBack,
@@ -105,14 +109,16 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
                         <RefreshIcon />
                         {state === 'open' || state === 'degraded' ? 'Reconnect' : 'Connect'}
                     </div>
-                    <div className='kebab__divider' />
-                    <div
-                        className='kebab__item'
-                        onClick={rename}
-                    >
-                        <PencilIcon />
-                        Rename contact
-                    </div>
+                    {!readOnly && <div className='kebab__divider' />}
+                    {!readOnly && (
+                        <div
+                            className='kebab__item'
+                            onClick={rename}
+                        >
+                            <PencilIcon />
+                            Rename contact
+                        </div>
+                    )}
                     {!group && (
                         <div
                             className='kebab__item'
@@ -125,7 +131,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
                             Show contact's QR code
                         </div>
                     )}
-                    {group && (
+                    {group && !readOnly && (
                         <div
                             className='kebab__item'
                             onClick={memberName}
@@ -134,7 +140,7 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
                             Change my name in group
                         </div>
                     )}
-                    {group && (
+                    {canAddMember && !readOnly && (
                         <div
                             className='kebab__item'
                             onClick={addMember}
@@ -143,25 +149,29 @@ const ChatHeader: React.FC<ChatHeaderProps> = ({
                             Add member
                         </div>
                     )}
-                    <div
-                        className='kebab__item'
-                        onClick={clear}
-                    >
-                        <TrashIcon />
-                        Clear history
-                    </div>
-                    <div className='kebab__divider' />
-                    <div
-                        className='kebab__item kebab__item--danger'
-                        onClick={remove}
-                    >
-                        <CloseIcon
-                            w={16}
-                            h={16}
-                            sw={1.7}
-                        />
-                        Delete chat
-                    </div>
+                    {!readOnly && (
+                        <div
+                            className='kebab__item'
+                            onClick={clear}
+                        >
+                            <TrashIcon />
+                            Clear history
+                        </div>
+                    )}
+                    {!readOnly && <div className='kebab__divider' />}
+                    {!readOnly && (
+                        <div
+                            className='kebab__item kebab__item--danger'
+                            onClick={remove}
+                        >
+                            <CloseIcon
+                                w={16}
+                                h={16}
+                                sw={1.7}
+                            />
+                            Delete chat
+                        </div>
+                    )}
                 </div>
             )}
         </div>

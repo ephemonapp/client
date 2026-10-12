@@ -394,3 +394,96 @@ Consequences:
 - one-to-one chats keep their current appearance, because a single other member collapses the aggregate to one name;
 - the change is local to the record model and the bubble: the wire events already carry their author, since MLS
   authenticates the sender of every event.
+
+## D-015 — The Rust facade is a wrapper, and the policy lives in the app
+
+Status: accepted Asked: 2026-08-22 Accepted: 2026-08-22
+
+Question: `packages/ephemon-mls/src/lib.rs` grew past wrapping OpenMLS. It encodes a member number into the
+`BasicCredential` identity as four big-endian bytes and reads it back, it decides commit authorisation
+(`authorized_committers`), and the security round added the invitee's member-number binding and the duplicate-number
+refusal to it as well. Should the facade own these rules, given that they need OpenMLS-authenticated inputs?
+
+Decision: no. The facade wraps the library and nothing else, and where the library can be driven directly it should not
+exist at all. Every product rule -- who may commit, what a member number means, which numbers may be added, what a
+locator is allowed to claim -- belongs in the app. The facade's job is to hand the app authenticated facts and to apply
+what the app then decides: `process_incoming_commit` returns the authenticated credential bytes and the sender type and
+leaves the commit staged; the app compares them against its own roster and calls `merge` or `rollback`. The same holds
+for `stage_add_member`, which should return the key package's claimed credential rather than judge it.
+
+Reason: the audited library must stay unchanged and unaudited code must stay out of the security decision path. A facade
+that only carries bytes needs no audit of its own; one that interprets credentials and enforces policy does, and it is a
+second place where a rule can be forgotten -- which is exactly how the external-commit bypass and the unguarded
+application path arrived, both found in the same review round.
+
+Consequences:
+
+- the identity encoding moves out: the app passes credential bytes at initialisation and never asks the facade what they
+  mean, so member numbers become purely an app concept;
+- commit authorisation costs one more worker round trip, and a staged-but-unmerged commit becomes an ordinary state
+  rather than an internal one -- the facade already models it through its pending and rollback path;
+- the policy becomes testable in the app's own unit suite, without a wasm rebuild;
+- the guards added in the security round (the `Sender::Member` refusal, the member-number binding, the duplicate
+  refusal) stay enforced until they are moved, and move as part of this change rather than being deleted first.
+
+## D-016 — An event carries its author's signature
+
+Status: accepted Asked: 2026-09-01 Accepted: 2026-09-01
+
+Question: `acceptChatEvent` takes a durable event's writer from the event's own `author` field whenever it differs from
+the authenticated MLS sender, checking only that the claim names a roster member. Any member can therefore attribute a
+message, a receipt or a reaction to any other member. Can the MLS sender check close this instead?
+
+Decision: no, and the gap is closed by a per-author signature over the event bytes. The MLS sender check is structurally
+unable to bind author to sender: anti-entropy re-encrypts a stored event under the _serving_ member's key so that a
+member who joined later can receive older history, so `sender != author` is ordinary on the catch-up path and
+indistinguishable from a fabrication. `ApplicationEvent` gains a signature over the authored context -- group id,
+author, sequence, previous hash and a hash of the body -- produced with the author's MLS signature key under its own
+label, and verified against that member's signature public key read from its MLS leaf. An event whose signature does not
+verify is refused and never stored.
+
+Reason: verifying the hash chain does not help, because every member sees every event and therefore knows any author's
+chain head, so a forger can produce a chain-consistent event. Refusing `sender != author` outright would close the
+forgery but break catch-up: a member that was offline while a peer left the group would never receive that peer's
+history. A signature is the only option that keeps relayed history verifiable no matter who re-encrypted it, and it is
+what D-005 and D-012 already claim the design provides.
+
+Consequences:
+
+- the wire format changes: every durable event grows by a signature, and a peer on an older build cannot be understood;
+- the facade gains two thin passthroughs -- signing with the own leaf key under a fixed label, and reading a member's
+  signature public key from its leaf -- neither of which interprets anything, so D-015 holds;
+- signing happens once per authored event and verification once per accepted event, including on the catch-up path,
+  where it is the point;
+- the label keeps the exposed signing primitive from producing anything an MLS peer would accept as protocol traffic;
+- ephemeral events (`member.profile`, typing) stay unsigned: they carry no chain position and are already re-announced,
+  and a forged name is what the member number beside it in D-013 is for.
+
+## D-017 — An event carries the epoch it was written in
+
+Status: accepted Accepted: 2026-09-30
+
+A member that joined later is not served history written before it joined. That rule compared a record's epoch with the
+asker's join epoch, but the receiver stamped each record with its own current epoch, so history that passed through a
+member who had been offline was re-stamped and handed to newcomers. The author's epoch now travels inside the signed
+event and the receiver keeps it; an epoch the receiver has not reached is refused.
+
+## D-018 — A group invite asks before it creates anything
+
+Status: accepted Accepted: 2026-09-30
+
+An invite from an accepted contact used to create a conversation, a vault row and an MLS session on arrival. It now
+prompts: join, decline, or decline and block the inviter. Nothing is created before "join". A decline holds for the
+session and a dismissed prompt returns with the inviter's next replay. Blocking from the prompt is how an already
+accepted contact gets blocked.
+
+## D-019 — A lagging member asks for the commits it is missing
+
+Status: accepted Accepted: 2026-09-30
+
+A member behind the group's epoch cannot read the group's traffic, and the group cannot read its requests either,
+because neither side keeps past epoch keys. It used to be rescued by a blind push of the newest commits and events on
+every reconnect. Instead, a member that receives traffic from an epoch it has not reached sends `commitsWanted` with its
+epoch outside MLS, on the already encrypted peer link, and is answered with exactly the commits after it. The commit log
+is kept whole, so a member can catch up however long it was away. Missing history goes out as `history.batch` events of
+up to 48 KB, each item still in its author's signed envelope and checked as if it had arrived alone.

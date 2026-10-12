@@ -30,14 +30,10 @@ test('clearing history is durable and leaves the conversation able to send', asy
         await alice.page.waitForTimeout(3_000);
         await expect(alice.bubbles).toHaveCount(0);
 
-        await bob.page.reload({ waitUntil: 'domcontentloaded' });
-        await bob.page.waitForSelector('.lock__card', { timeout: 60_000 });
-        await bob.unlock('clear-bob-pass');
+        await bob.restart('clear-bob-pass');
         await bob.selectConversation(alice.publicKey);
 
-        await alice.page.reload({ waitUntil: 'domcontentloaded' });
-        await alice.page.waitForSelector('.lock__card', { timeout: 60_000 });
-        await alice.unlock(alicePassword);
+        await alice.restart(alicePassword);
         await alice.selectConversation(bob.publicKey);
         await alice.reconnectFromKebab();
         await alice.waitForConnected();

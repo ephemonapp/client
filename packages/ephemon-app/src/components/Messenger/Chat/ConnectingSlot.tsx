@@ -16,7 +16,7 @@ const ConnectingSlot: React.FC<ConnectingSlotProps> = ({ conversationId, name, o
     const notice = useConnectionNotice(conversationId);
     const progress = useConnectionProgress(conversationId);
 
-    if (notice !== undefined && state !== 'open' && state !== 'degraded') {
+    if (notice !== undefined && (notice.code === 'sync-failed' || (state !== 'open' && state !== 'degraded'))) {
         return (
             <FailureBanner
                 text={noticeText(notice, name)}

@@ -12,7 +12,7 @@
     "private": true,
     "scripts": {
         "prettify": "npx prettier . --write",
-        "test": "cd packages/ephemon-core && npm run test && cd ../..",
+        "test": "npm run test --workspace=@ephemon/core && npm run test --workspace=@ephemon/app",
         "start": "cd packages/ephemon-app && npm run prerender && webpack serve --env environment=local",
         "start:production": "cd packages/ephemon-app && npm run prerender && EPHEMON_PROXY_TARGET=https://s.ephemon.app EPHEMON_SERVER_URL=http://localhost:8081 EPHEMON_CLIENT_URL=http://localhost:8081 EPHEMON_APP_NAME=Ephemon EPHEMON_VAPID_KEY=BHAYDRAjMWXfg7dxFIOZYNLlxrVDohy_PbN7SXcrXapiZq0Jnt0VXsAx6ytkLArVVFDSfula4VRWm5HDvkVVRbA webpack serve --env environment=local",
         "build": "npm run prettify && npm run build --workspace=@ephemon/app && npm run coverage:generate && npm run coverage:copy",

@@ -1,4 +1,5 @@
-import { ConversationId, MemberNumber, toMemberNumber } from '../types/conversation';
+import { ConversationId, MemberNumber } from '../types/conversation';
+import { decodeIdentities, identityOf, memberNumberOf, memberNumbersOf } from './memberIdentity';
 import { MlsCheckpointStore } from './mlsCheckpointStore';
 import {
     DEFAULT_MLS_WASM_ASSET_URLS,
@@ -6,25 +7,65 @@ import {
     MlsWasmAssetUrls,
     MlsWorkerCommand,
     MlsWorkerCommandResult,
-    MlsWorkerRequest,
+    MlsWorkerErrorCode,
     MlsWorkerRequestPayload,
     MlsWorkerResponse,
     MlsWorkerSuccessResponse,
 } from './protocol';
 
+/** A failure raised inside the MLS worker, carrying the classification callers branch on. */
+export class MlsWorkerError extends Error {
+    readonly code: MlsWorkerErrorCode;
+
+    constructor(message: string, code: MlsWorkerErrorCode) {
+        super(message);
+        this.name = 'MlsWorkerError';
+        this.code = code;
+    }
+}
+
+export function mlsErrorCode(error: unknown): MlsWorkerErrorCode {
+    return error instanceof MlsWorkerError ? error.code : 'unknown';
+}
+
+/** Only a roster change can move a member's signature key; an application message cannot, and there are many of those. */
+function rotatesSignatureKeys(command: MlsWorkerCommand['kind']): boolean {
+    return command !== 'createApplicationMessage' && command !== 'processApplicationMessage';
+}
+
+function pairSignatureKeys(
+    memberNumbers: ReadonlyArray<MemberNumber>,
+    keys: ReadonlyArray<Uint8Array>,
+): ReadonlyMap<number, Uint8Array> {
+    if (memberNumbers.length !== keys.length) {
+        throw new Error('The MLS roster and its signature keys disagree on member count');
+    }
+    return new Map(memberNumbers.map((memberNumber, index) => [Number(memberNumber), keys[index]]));
+}
+
 export type MlsGroupInspection = {
     memberNumber: MemberNumber;
     epoch?: bigint;
     memberNumbers?: ReadonlyArray<MemberNumber>;
+    signatureKeys?: ReadonlyMap<number, Uint8Array>;
     epochAuthenticator?: Uint8Array;
 };
 
-export type MlsCommitOutcome = {
+/** What a commit says about itself; the app decides on these before it is kept. */
+export type MlsCommitFacts = {
     senderMemberNumber: MemberNumber;
-    epoch: bigint;
+    senderIsMember: boolean;
     added: ReadonlyArray<MemberNumber>;
-    removed: ReadonlyArray<MemberNumber>;
+    removedLeaves: ReadonlyArray<number>;
+    epoch: bigint;
 };
+
+export class MlsCommitRefusedError extends Error {
+    constructor(reason: string) {
+        super(reason);
+        this.name = 'MlsCommitRefusedError';
+    }
+}
 
 type Session = {
     revision: number | null;
@@ -45,6 +86,7 @@ export class MlsWorkerClient {
     private readonly pending = new Map<number, PendingRpc>();
     private readonly sessions = new Map<ConversationId, Session>();
     private readonly queues = new Map<ConversationId, Promise<unknown>>();
+    private readonly signatureKeys = new Map<ConversationId, ReadonlyMap<number, Uint8Array>>();
     private nextRequestId = 1;
     private fatalError: Error | undefined;
 
@@ -66,7 +108,7 @@ export class MlsWorkerClient {
             if (pending === undefined) return;
             this.pending.delete(response.requestId);
             if (response.ok) pending.resolve(response);
-            else pending.reject(new Error(response.error));
+            else pending.reject(new MlsWorkerError(response.error, response.code));
         };
         worker.onerror = () => this.failFatally(new Error('MLS worker crashed'));
         worker.onmessageerror = () => this.failFatally(new Error('MLS worker returned an unreadable response'));
@@ -76,6 +118,7 @@ export class MlsWorkerClient {
         return this.exclusive(conversationId, async () => {
             const existing = this.sessions.get(conversationId);
             if (existing !== undefined) existing.unusable = true;
+            this.signatureKeys.delete(conversationId);
             const stored = await this.checkpointStore.load(conversationId);
             const companion = stored?.companion === undefined ? undefined : Uint8Array.from(stored.companion);
             const chain = stored?.chain === undefined ? undefined : Uint8Array.from(stored.chain);
@@ -84,12 +127,12 @@ export class MlsWorkerClient {
                 const response = await this.rpc({
                     kind: 'load',
                     conversationId,
-                    memberNumber,
+                    identity: identityOf(memberNumber),
                     checkpoint: stored?.bytes,
                     assets: this.assets,
                 });
                 if (response.kind !== 'loaded') throw new Error(`Unexpected MLS worker response ${response.kind}`);
-                if (response.memberNumber !== memberNumber)
+                if (Number(memberNumberOf(response.identity)) !== Number(memberNumber))
                     throw new Error('MLS worker loaded the wrong member identity');
                 existing?.companion?.fill(0);
                 existing?.chain?.fill(0);
@@ -137,7 +180,8 @@ export class MlsWorkerClient {
         conversationId: ConversationId,
         keyPackage: Uint8Array,
         checkpointCompanion?: (result: { commit: Uint8Array; welcome: Uint8Array }) => Uint8Array,
-    ): Promise<{ commit: Uint8Array; welcome: Uint8Array }> {
+        expectedMemberNumber?: MemberNumber,
+    ): Promise<{ claimedMemberNumber: MemberNumber; commit: Uint8Array; welcome: Uint8Array }> {
         return this.mutate(
             conversationId,
             { kind: 'stageAddMember', keyPackage },
@@ -145,7 +189,18 @@ export class MlsWorkerClient {
             checkpointCompanion === undefined
                 ? undefined
                 : ({ commit, welcome }) => checkpointCompanion({ commit, welcome }),
-        ).then(({ commit, welcome }) => ({ commit, welcome }));
+            undefined,
+            (result) => {
+                const claimed = memberNumberOf(result.claimedIdentity);
+                if (expectedMemberNumber !== undefined && Number(claimed) !== Number(expectedMemberNumber)) {
+                    throw new Error('MLS key package claims a member number the inviter did not assign');
+                }
+            },
+        ).then(({ claimedIdentity, commit, welcome }) => ({
+            claimedMemberNumber: memberNumberOf(claimedIdentity),
+            commit,
+            welcome,
+        }));
     }
 
     mergePendingCommit(
@@ -190,13 +245,14 @@ export class MlsWorkerClient {
     processApplicationMessage(
         conversationId: ConversationId,
         message: Uint8Array,
-    ): Promise<{ senderMemberNumber: MemberNumber; payload: Uint8Array }> {
+    ): Promise<{ senderMemberNumber: MemberNumber; senderIsMember: boolean; payload: Uint8Array }> {
         return this.mutate(
             conversationId,
             { kind: 'processApplicationMessage', message },
             'applicationMessageProcessed',
         ).then((result) => ({
-            senderMemberNumber: toMemberNumber(result.senderMemberNumber),
+            senderMemberNumber: memberNumberOf(result.senderIdentity),
+            senderIsMember: result.senderIsMember,
             payload: result.payload,
         }));
     }
@@ -211,21 +267,49 @@ export class MlsWorkerClient {
         ).then((result) => result.commit);
     }
 
+    /**
+     * Applies a commit only if `refuse` returns no reason; a refusal rolls the worker back to before the commit and
+     * throws that reason, so the conversation is left exactly as it was.
+     */
     processIncomingCommit(
         conversationId: ConversationId,
         message: Uint8Array,
-        authorizedCommitters: ReadonlyArray<MemberNumber>,
-    ): Promise<MlsCommitOutcome> {
+        refuse: (commit: MlsCommitFacts) => string | undefined,
+    ): Promise<MlsCommitFacts> {
+        let facts: MlsCommitFacts | undefined;
         return this.mutate(
             conversationId,
-            { kind: 'processIncomingCommit', message, authorizedCommitters },
+            { kind: 'processIncomingCommit', message },
             'commitProcessed',
-        ).then((result) => ({
-            senderMemberNumber: toMemberNumber(result.senderMemberNumber),
-            epoch: BigInt(result.epoch),
-            added: Array.from(result.added, toMemberNumber),
-            removed: Array.from(result.removed, toMemberNumber),
-        }));
+            undefined,
+            undefined,
+            (result) => {
+                facts = {
+                    senderMemberNumber: memberNumberOf(result.senderIdentity),
+                    senderIsMember: result.senderIsMember,
+                    added: memberNumbersOf(result.added, result.addedLengths),
+                    removedLeaves: result.removedLeaves,
+                    epoch: BigInt(result.epoch),
+                };
+                const reason = refuse(facts);
+                if (reason !== undefined) throw new MlsCommitRefusedError(reason);
+            },
+        ).then(() => {
+            if (facts === undefined) throw new Error('MLS commit facts were not produced');
+            return facts;
+        });
+    }
+
+    forget(conversationId: ConversationId): Promise<void> {
+        this.signatureKeys.delete(conversationId);
+        return this.exclusive(conversationId, async () => {
+            const session = this.sessions.get(conversationId);
+            session?.companion?.fill(0);
+            session?.chain?.fill(0);
+            this.sessions.delete(conversationId);
+            const response = await this.rpc({ kind: 'unload', conversationId });
+            if (response.kind !== 'unloaded') throw new Error(`Unexpected MLS worker response ${response.kind}`);
+        });
     }
 
     inspect(conversationId: ConversationId): Promise<MlsGroupInspection> {
@@ -233,18 +317,70 @@ export class MlsWorkerClient {
             this.requireUsableSession(conversationId);
             const response = await this.rpc({ kind: 'inspect', conversationId });
             if (response.kind !== 'inspected') throw new Error(`Unexpected MLS worker response ${response.kind}`);
+            const memberNumbers =
+                response.memberIdentities === undefined || response.memberIdentityLengths === undefined
+                    ? undefined
+                    : memberNumbersOf(response.memberIdentities, response.memberIdentityLengths);
+            const signatureKeys =
+                memberNumbers === undefined ||
+                response.memberSignatureKeys === undefined ||
+                response.memberSignatureKeyLengths === undefined
+                    ? undefined
+                    : pairSignatureKeys(
+                          memberNumbers,
+                          decodeIdentities(response.memberSignatureKeys, response.memberSignatureKeyLengths),
+                      );
+            if (signatureKeys !== undefined) this.signatureKeys.set(conversationId, signatureKeys);
             return {
-                memberNumber: toMemberNumber(response.memberNumber),
+                memberNumber: memberNumberOf(response.identity),
                 epoch: response.epoch === undefined ? undefined : BigInt(response.epoch),
-                memberNumbers:
-                    response.memberNumbers === undefined
-                        ? undefined
-                        : Array.from(response.memberNumbers, toMemberNumber),
+                memberNumbers,
+                signatureKeys,
                 epochAuthenticator:
                     response.epochAuthenticator === undefined
                         ? undefined
                         : Uint8Array.from(response.epochAuthenticator),
             };
+        });
+    }
+
+    /** Signs authored bytes with this member's own MLS signature key. */
+    sign(conversationId: ConversationId, message: Uint8Array): Promise<Uint8Array> {
+        return this.exclusive(conversationId, async () => {
+            this.requireUsableSession(conversationId);
+            const response = await this.rpc({ kind: 'sign', conversationId, message });
+            if (response.kind !== 'signed') throw new Error(`Unexpected MLS worker response ${response.kind}`);
+            return Uint8Array.from(response.signature);
+        });
+    }
+
+    /**
+     * Answers whether the named member signed these bytes, against the signature key in that member's MLS leaf. A
+     * member this group has never seen, or one whose key cannot be read, is not verified.
+     */
+    async verifyAuthor(
+        conversationId: ConversationId,
+        author: MemberNumber,
+        message: Uint8Array,
+        signature: Uint8Array,
+    ): Promise<boolean> {
+        let key = this.signatureKeys.get(conversationId)?.get(Number(author));
+        if (key === undefined) {
+            await this.inspect(conversationId);
+            key = this.signatureKeys.get(conversationId)?.get(Number(author));
+        }
+        if (key === undefined) return false;
+        return await this.exclusive(conversationId, async () => {
+            this.requireUsableSession(conversationId);
+            const response = await this.rpc({
+                kind: 'verify',
+                conversationId,
+                signaturePublicKey: key,
+                message,
+                signature,
+            });
+            if (response.kind !== 'verified') throw new Error(`Unexpected MLS worker response ${response.kind}`);
+            return response.valid;
         });
     }
 
@@ -275,9 +411,11 @@ export class MlsWorkerClient {
         expectedKind: ResultKind,
         checkpointCompanion?: (result: Extract<MlsWorkerCommandResult, { kind: ResultKind }>) => Uint8Array | undefined,
         checkpointChain?: Uint8Array,
+        veto?: (result: Extract<MlsWorkerCommandResult, { kind: ResultKind }>) => void,
     ): Promise<Extract<MlsWorkerCommandResult, { kind: ResultKind }>> {
         return this.exclusive(conversationId, async () => {
             const session = this.requireUsableSession(conversationId);
+            if (rotatesSignatureKeys(command.kind)) this.signatureKeys.delete(conversationId);
             const response = await this.rpc({ kind: 'execute', conversationId, command });
             if (response.kind !== 'executed') throw new Error(`Unexpected MLS worker response ${response.kind}`);
             if (response.result.kind !== expectedKind) {
@@ -299,10 +437,9 @@ export class MlsWorkerClient {
 
             let nextCompanion: Uint8Array | undefined;
             try {
-                nextCompanion =
-                    checkpointCompanion === undefined
-                        ? session.companion
-                        : checkpointCompanion(response.result as Extract<MlsWorkerCommandResult, { kind: ResultKind }>);
+                const result = response.result as Extract<MlsWorkerCommandResult, { kind: ResultKind }>;
+                veto?.(result);
+                nextCompanion = checkpointCompanion === undefined ? session.companion : checkpointCompanion(result);
             } catch (companionError) {
                 response.checkpoint.fill(0);
                 try {

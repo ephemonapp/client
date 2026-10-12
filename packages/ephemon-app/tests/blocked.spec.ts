@@ -18,12 +18,16 @@ test('an unwanted caller is declined forever, survives a restart, and can be unb
         await expect(bob.blockedRows.first()).toContainText(alice.publicKey.slice(0, 7));
         await bob.page.click('.modal-close');
 
-        await bob.page.reload({ waitUntil: 'domcontentloaded' });
-        await bob.page.waitForSelector('.lock__card', { timeout: 60_000 });
-        await bob.unlock(bobPassword);
+        await bob.restart(bobPassword);
         await bob.openBlockedFromSidebar();
         await expect(bob.blockedRows).toHaveCount(1);
 
+        await bob.page.click('.modal-close');
+        await alice.connectTo(bob.publicKey);
+        await bob.page.waitForTimeout(5_000);
+        await expect(bob.page.locator('.dial__accept')).toHaveCount(0);
+
+        await bob.openBlockedFromSidebar();
         await bob.unblockFromModal();
         await expect(bob.blockedRows).toHaveCount(0);
         await bob.page.click('.modal-close');

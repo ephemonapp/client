@@ -55,6 +55,12 @@ export class EphemonApp {
         await this.page.goto('about:blank', { waitUntil: 'domcontentloaded' });
     }
 
+    async restart(password: string): Promise<void> {
+        await this.page.reload({ waitUntil: 'domcontentloaded' });
+        await this.page.waitForSelector('.lock__card', { timeout: 60_000 });
+        await this.unlock(password);
+    }
+
     async returnToApp(origin: string, password: string): Promise<void> {
         await this.page.goto(`${origin}/`, { waitUntil: 'domcontentloaded' });
         await this.page.waitForSelector('.lock__card', { timeout: 60_000 });
@@ -108,8 +114,51 @@ export class EphemonApp {
         await this.page.click('.dial__accept');
     }
 
+    async acceptGroupInvite(): Promise<void> {
+        await this.page.waitForSelector('.invite__accept', { timeout: 60_000 });
+        await this.page.click('.invite__accept');
+    }
+
+    async declineGroupInvite(): Promise<void> {
+        await this.page.waitForSelector('.invite__decline', { timeout: 60_000 });
+        await this.page.click('.invite__decline');
+    }
+
+    async blockGroupInviter(): Promise<void> {
+        await this.page.waitForSelector('.invite__block', { timeout: 60_000 });
+        await this.page.click('.invite__block');
+    }
+
+    get groupInvite(): Locator {
+        return this.page.locator('.invite__accept');
+    }
+
     async blockIncomingDial(): Promise<void> {
         await this.page.click('.dial__block');
+    }
+
+    commitConversations(): Promise<Array<number>> {
+        return this.page.evaluate(
+            ([database, store]) =>
+                new Promise<Array<number>>((resolve, reject) => {
+                    const request = indexedDB.open(database as string);
+                    request.onerror = () => reject(request.error);
+                    request.onsuccess = () => {
+                        const db = request.result;
+                        if (!db.objectStoreNames.contains(store as string)) {
+                            resolve([]);
+                            return;
+                        }
+                        const keys = db
+                            .transaction([store as string], 'readonly')
+                            .objectStore(store as string)
+                            .getAllKeys();
+                        keys.onerror = () => reject(keys.error);
+                        keys.onsuccess = () => resolve((keys.result as Array<Array<number>>).map((key) => key[0]));
+                    };
+                }),
+            ['ephemon', 'mls_commits'] as const,
+        );
     }
 
     notifications(): Promise<string[]> {
@@ -216,13 +265,6 @@ export class EphemonApp {
         await this.page.waitForSelector('.introduce__input', { state: 'detached', timeout: 60_000 });
     }
 
-    async renameSelfInGroupFromKebab(name: string): Promise<void> {
-        await this.kebabItem(/Change my name in group/);
-        await this.page.waitForSelector('.rename__input');
-        await this.page.fill('.rename__input', name);
-        await this.page.click('.rename__save');
-    }
-
     get retryBanner(): Locator {
         return this.chat.locator('.connecting--failed .connecting__retry');
     }
@@ -231,19 +273,11 @@ export class EphemonApp {
         await this.retryBanner.click();
     }
 
-    reactionOn(text: string): Locator {
-        return this.peerBubble(text).locator('.bubble__reaction');
-    }
-
     peerReactions(text: string): Locator {
         return this.peerBubble(text).locator('.bubble__reaction');
     }
 
     ownReactions(text: string): Locator {
-        return this.ownBubble(text).locator('.bubble__reaction');
-    }
-
-    ownReactionOn(text: string): Locator {
         return this.ownBubble(text).locator('.bubble__reaction');
     }
 
@@ -344,6 +378,10 @@ export class EphemonApp {
         await this.chat.locator('.kebab').waitFor({ state: 'detached' });
     }
 
+    kebabItems(): Locator {
+        return this.chat.locator('.kebab__item');
+    }
+
     private async kebabItem(label: string | RegExp): Promise<void> {
         await this.openKebab();
         await this.chat.locator('.kebab__item').filter({ hasText: label }).click();
@@ -364,16 +402,6 @@ export class EphemonApp {
 
     async deleteChatFromKebab(): Promise<void> {
         await this.kebabItem(/Delete chat/);
-    }
-
-    async addMemberFromKebab(publicKey: string): Promise<void> {
-        await this.kebabItem(/Add member/);
-        await this.page.waitForSelector('.contact-picker__list');
-        await this.page
-            .locator('.contact-picker__row')
-            .filter({ hasText: shortKey(publicKey) })
-            .click();
-        await this.page.click('.contact-picker__confirm');
     }
 
     async openRenameFromKebab(): Promise<void> {

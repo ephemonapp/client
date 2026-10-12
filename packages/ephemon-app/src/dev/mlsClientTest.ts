@@ -287,6 +287,8 @@ async function runDirectBootstrapRecoveryTest(store: MemoryCheckpointStore): Pro
         creatorMembership,
         undefined,
         1_754_300_000_000,
+        (bytes) => alice.sign(aliceId, bytes),
+        1n,
     );
     const applicationMessage = await alice.createApplicationMessage(aliceId, authored.bytes);
     const applicationWire = encodeDirectMlsWireFrame({
@@ -302,6 +304,7 @@ async function runDirectBootstrapRecoveryTest(store: MemoryCheckpointStore): Pro
         processed.senderMemberNumber,
         inviteeMembership,
         1_754_300_000_000,
+        (author, bytes, signature) => bob.verifyAuthor(bobId, author, bytes, signature),
     );
     if (accepted.kind !== 'record' || accepted.record.kind !== 'message') {
         throw new Error('Recovered bootstrap did not deliver an authenticated message record');
@@ -406,12 +409,14 @@ async function assertApplicationEventCodec(): Promise<void> {
             time,
             author: toMemberNumber(0),
             chain: { sequence: 0 },
+            epoch: 1n,
             body: { kind: 'message.created', text: 'first' },
         },
         {
             time,
             author: toMemberNumber(0),
             chain: { sequence: 1, previous },
+            epoch: 1n,
             body: {
                 kind: 'message.created',
                 text: 'reply to an event',
@@ -426,6 +431,7 @@ async function assertApplicationEventCodec(): Promise<void> {
             time,
             author: toMemberNumber(0),
             chain: { sequence: 2, previous },
+            epoch: 1n,
             body: {
                 kind: 'message.created',
                 text: 'reply to another event',
@@ -440,18 +446,21 @@ async function assertApplicationEventCodec(): Promise<void> {
             time,
             author: toMemberNumber(0),
             chain: { sequence: 3, previous },
+            epoch: 1n,
             body: { kind: 'message.delivered', targetHash },
         },
         {
             time,
             author: toMemberNumber(0),
             chain: { sequence: 4, previous },
+            epoch: 1n,
             body: { kind: 'message.seen', targetHash },
         },
         {
             time,
             author: toMemberNumber(0),
             chain: { sequence: 5, previous },
+            epoch: 1n,
             body: { kind: 'reaction.set', targetHash, value: '👍' },
         },
         { time, body: { kind: 'typing' } },
@@ -493,6 +502,7 @@ async function assertApplicationEventCodec(): Promise<void> {
             time,
             author: toMemberNumber(0),
             chain: { sequence: 9 },
+            epoch: 1n,
             body: { kind: 'message.created', text: 'orphan' },
         }),
     );
@@ -555,11 +565,18 @@ async function runMlsClientTest(): Promise<{
         Uint8Array.from([...encoder.encode('invitee-key-package:'), ...bytes]),
     );
     let stagedCompanionBytes = 0;
-    const { welcome } = await alice.stageAddMember(aliceId, keyPackage, ({ commit, welcome: stagedWelcome }) => {
-        const companion = Uint8Array.from([...commit, ...stagedWelcome]);
-        stagedCompanionBytes = companion.byteLength;
-        return companion;
-    });
+    const { claimedMemberNumber, welcome } = await alice.stageAddMember(
+        aliceId,
+        keyPackage,
+        ({ commit, welcome: stagedWelcome }) => {
+            const companion = Uint8Array.from([...commit, ...stagedWelcome]);
+            stagedCompanionBytes = companion.byteLength;
+            return companion;
+        },
+    );
+    if (Number(claimedMemberNumber) !== 1) {
+        throw new Error('A staged add did not report the number the key package claims');
+    }
     if (alice.getCheckpointCompanion(aliceId)?.byteLength !== stagedCompanionBytes) {
         throw new Error('MLS checkpoint companion was not replaced atomically with staged add artifacts');
     }
@@ -619,17 +636,16 @@ async function runMlsClientTest(): Promise<{
     await bob.mergePendingCommit(bobId);
     let refused = false;
     try {
-        await alice.processIncomingCommit(aliceId, bobCommit, [toMemberNumber(0)]);
+        await alice.processIncomingCommit(aliceId, bobCommit, () => 'the test refuses this commit');
     } catch {
         refused = true;
     }
-    if (!refused) throw new Error('An unauthorized commit was merged');
-    const refusedInspection = await alice.inspect(aliceId);
-    if (refusedInspection.epoch !== 1n) throw new Error('A refused commit advanced the epoch');
+    if (!refused) throw new Error('A refused commit was kept');
+    if ((await alice.inspect(aliceId)).epoch !== 1n) throw new Error('A refused commit advanced the epoch');
 
-    const authorized = await alice.processIncomingCommit(aliceId, bobCommit, [toMemberNumber(0), toMemberNumber(1)]);
-    if (authorized.senderMemberNumber !== 1 || authorized.epoch !== 2n) {
-        throw new Error('An authorized commit did not merge at the next epoch');
+    const accepted = await alice.processIncomingCommit(aliceId, bobCommit, () => undefined);
+    if (Number(accepted.senderMemberNumber) !== 1 || !accepted.senderIsMember || accepted.epoch !== 2n) {
+        throw new Error('An accepted commit did not report its sender and epoch');
     }
     const aliceHead = (await alice.inspect(aliceId)).epochAuthenticator;
     const bobHead = (await bob.inspect(bobId)).epochAuthenticator;

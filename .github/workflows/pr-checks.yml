@@ -33,7 +33,8 @@ jobs:
         id: test_cov
         run: |
           set -o pipefail
-          npm run coverage:generate 2>&1 | tee test.log
+          npm run test 2>&1 | tee test.log
+          npm run coverage:generate 2>&1 | tee -a test.log
       - name: Check test result
         id: check_test
         run: |

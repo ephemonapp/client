@@ -1,5 +1,6 @@
 import { useChat } from '../../../hooks/useChat';
 import { ConnectionCallbacks } from '../../../hooks/useConnectionCallbacksCache';
+import { hasSeen } from '../../../lib/chatStore';
 import { setConnectionNotice, setConnectionProgress, useActiveConversation } from '../../../lib/connectionStore';
 import { displayName } from '../../../lib/identicon';
 import { ChatWindowMessageType } from '../../../types/chatMessageType';
@@ -28,6 +29,7 @@ type ChatPaneProps = {
     memberName?: string;
     members?: ReadonlyArray<{ memberNumber: number; publicKey: string; name?: string }>;
     ownMemberNumber?: number;
+    owner?: number;
     onOpenMemberName: (id: ConversationId) => void;
     onIntroduce: (id: ConversationId, name: string) => void;
     onOpenReceipts?: (entries: ReadonlyArray<ReceiptListEntry>) => void;
@@ -41,6 +43,11 @@ type ChatPaneProps = {
 const MENU_W = 236;
 const MENU_H = 150;
 
+/** A member seated by a commit has no locator until its profile arrives; the number is all there is to show. */
+function memberLabel(member: { memberNumber: number; publicKey: string; name?: string }): string {
+    return displayName(member.name, member.publicKey) || `Member ${Number(member.memberNumber)}`;
+}
+
 const ChatPane: React.FC<ChatPaneProps> = ({
     id,
     columnVisible,
@@ -53,6 +60,7 @@ const ChatPane: React.FC<ChatPaneProps> = ({
     memberName,
     members,
     ownMemberNumber,
+    owner,
     onOpenMemberName,
     onIntroduce,
     onOpenReceipts,
@@ -63,7 +71,14 @@ const ChatPane: React.FC<ChatPaneProps> = ({
     onDelete,
 }) => {
     const onScreen = useActiveConversation() === id && columnVisible;
-    const chat = useChat({ conversationId: id, ownMemberNumber, callbacks });
+    const anonymousInGroup = group === true && (memberName ?? '') === '';
+    const chat = useChat({
+        conversationId: id,
+        group: group === true,
+        ownMemberNumber,
+        anonymous: anonymousInGroup,
+        callbacks,
+    });
     const [anchor, setAnchor] = useState<ReactionAnchor | null>(null);
 
     useEffect(() => {
@@ -72,21 +87,19 @@ const ChatPane: React.FC<ChatPaneProps> = ({
 
     const ownSeenOf = useCallback(
         (message: ChatWindowMessageType): boolean =>
-            ownMemberNumber !== undefined &&
-            (message.seenBy ?? []).some((entry) => Number(entry.author) === Number(ownMemberNumber)),
-        [ownMemberNumber],
+            ownMemberNumber !== undefined
+                ? hasSeen(message, ownMemberNumber)
+                : group !== true && hasSeen(message, undefined),
+        [group, ownMemberNumber],
     );
 
     const onSeen = useCallback(
         (messageId: EventId) => {
             const message = chat.store.getMessage(messageId);
-            const mine =
-                ownMemberNumber !== undefined &&
-                (message?.seenBy ?? []).some((entry) => Number(entry.author) === Number(ownMemberNumber));
-            if (mine) return;
+            if (message !== undefined && ownSeenOf(message)) return;
             void chat.send.seen(messageId).catch(() => {});
         },
-        [chat.send, chat.store, ownMemberNumber],
+        [chat.send, chat.store, ownSeenOf],
     );
 
     const listRef = useRef<MessageListHandle | null>(null);
@@ -129,11 +142,11 @@ const ChatPane: React.FC<ChatPaneProps> = ({
             if (message === undefined) return undefined;
             if (message.reactions === undefined) return message.reaction?.value;
             const mine = ownMemberNumber;
-            if (mine === undefined) return undefined;
+            if (mine === undefined) return group === true ? undefined : message.reaction?.value;
             return message.reactions.find((entry) => entry.authors.some((author) => Number(author) === Number(mine)))
                 ?.value;
         },
-        [ownMemberNumber],
+        [group, ownMemberNumber],
     );
 
     const pickReaction = useCallback(
@@ -165,14 +178,14 @@ const ChatPane: React.FC<ChatPaneProps> = ({
     const openMemberName = useCallback(() => onOpenMemberName(id), [id, onOpenMemberName]);
     const openReceipts = useCallback(
         (message: ChatWindowMessageType) => {
-            const ownKey = members?.find((member) => Number(member.memberNumber) === Number(message.author));
             const read = new Set((message.seenBy ?? []).map((entry) => Number(entry.author)));
             const got = new Set((message.deliveredBy ?? []).map((entry) => Number(entry.author)));
             const entries = (members ?? [])
-                .filter((member) => member.publicKey !== ownKey?.publicKey)
+                .filter((member) => Number(member.memberNumber) !== Number(message.author))
                 .map((member) => ({
+                    memberNumber: Number(member.memberNumber),
                     publicKey: member.publicKey,
-                    display: displayName(member.name, member.publicKey),
+                    display: memberLabel(member),
                     reaction: (message.reactions ?? []).find((entry) =>
                         entry.authors.some((author) => Number(author) === Number(member.memberNumber)),
                     )?.value,
@@ -193,14 +206,13 @@ const ChatPane: React.FC<ChatPaneProps> = ({
             if (member === undefined) return undefined;
             return {
                 publicKey: member.publicKey,
+                memberNumber: Number(member.memberNumber),
                 name: member.name,
-                display: displayName(member.name, member.publicKey),
+                display: memberLabel(member),
             };
         },
         [group, members],
     );
-    const anonymousInGroup = group === true && (memberName ?? '') === '';
-
     const onReconnect = useCallback(() => {
         setConnectionNotice(id, undefined);
         void callbacks.lifecycle.open().catch(() => {});
@@ -225,6 +237,10 @@ const ChatPane: React.FC<ChatPaneProps> = ({
                 name={name}
                 publicKey={publicKey}
                 group={group === true}
+                readOnly={readOnly}
+                canAddMember={
+                    group === true && owner !== undefined && ownMemberNumber !== undefined && owner === ownMemberNumber
+                }
                 onMemberName={openMemberName}
                 isMobile={isMobile}
                 onBack={onBack}

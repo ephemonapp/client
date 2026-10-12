@@ -22,6 +22,8 @@ test('a group attributes reactions and receipts to the member behind them', asyn
         await peer2.waitForConnected();
 
         await master.createGroupFromSidebar([peer1.publicKey, peer2.publicKey], 'Master');
+        await peer1.acceptGroupInvite();
+        await peer2.acceptGroupInvite();
         for (const app of everyone) await expect(app.groupRow).toHaveCount(1);
         await peer1.selectGroup();
         await peer1.nameSelfInGroup('Peer One');

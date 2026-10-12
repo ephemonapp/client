@@ -177,10 +177,10 @@ async function evaluateAcrossNavigation<T>(page: Page, fn: () => T, fallback: T)
 
 async function waitForRenderQuiet(page: Page, quietMs: number, timeoutMs: number): Promise<void> {
     const deadline = Date.now() + timeoutMs;
-    let seen = -1;
+    let seen: number | undefined;
     for (;;) {
         const count = await evaluateAcrossNavigation(page, () => window.__reactRenderProfiler?.commitCount() ?? 0, -1);
-        if (count === seen) return;
+        if (count >= 0 && count === seen) return;
         seen = count;
         if (Date.now() > deadline) return;
         await page.waitForTimeout(quietMs);

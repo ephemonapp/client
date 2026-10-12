@@ -136,7 +136,7 @@ describe('ConnectionSaga (Edge Cases)', () => {
         saga.getRtcSendDataChannel = () => mockDataChannel;
 
         saga.send('legacy text');
-        expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('Error sending data'));
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('Error sending data'), expect.anything());
         expect(mockDataChannel.send).not.toHaveBeenCalled();
     });
 

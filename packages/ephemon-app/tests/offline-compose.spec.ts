@@ -19,9 +19,7 @@ test('an MLS message composed while disconnected is authored locally and deliver
         await alice.sendMessage(online);
         await expect(bob.peerBubble(online)).toHaveCount(1, { timeout: 60_000 });
 
-        await alice.page.reload({ waitUntil: 'domcontentloaded' });
-        await alice.page.waitForSelector('.lock__card', { timeout: 60_000 });
-        await alice.unlock(alicePassword);
+        await alice.restart(alicePassword);
         await alice.selectConversation(bob.publicKey);
 
         const text = `offline mls message ${Date.now()}`;

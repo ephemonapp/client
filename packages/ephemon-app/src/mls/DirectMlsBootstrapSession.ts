@@ -1,5 +1,6 @@
 import { ConversationId } from '../types/conversation';
 import { MlsWorkerClient } from './MlsWorkerClient';
+import { sameBytes } from './byteCodec';
 import {
     DIRECT_MLS_BOOTSTRAP_VERSION,
     DirectMlsBootstrapFrame,
@@ -7,6 +8,7 @@ import {
     encodeDirectMlsBootstrapFrame,
     tryDecodeDirectMlsBootstrapFrame,
 } from './directBootstrapProtocol';
+import { otherMemberNumber } from './storedMembership';
 
 export type DirectMlsBootstrapResult = {
     routingId: Uint8Array;
@@ -34,11 +36,6 @@ type DirectMlsBootstrapSessionOptions = {
 
 function defaultRandomBytes(byteLength: number): Uint8Array {
     return crypto.getRandomValues(new Uint8Array(byteLength));
-}
-
-function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
-    if (left.byteLength !== right.byteLength) return false;
-    return left.every((value, index) => value === right[index]);
 }
 
 function requireRoutingId(frame: DirectMlsBootstrapFrame): Uint8Array {
@@ -79,6 +76,10 @@ export class DirectMlsBootstrapSession {
     linkOpened(): Promise<void> {
         return this.serial(async () => {
             if (!this.started) await this.initialize();
+            if (this.companion !== undefined) {
+                this.send(this.companion);
+                return;
+            }
             this.sendHello();
         });
     }
@@ -204,16 +205,25 @@ export class DirectMlsBootstrapSession {
         }
         if (this.companion?.kind !== 'initialize') this.unexpected(frame.kind);
 
+        const expected = otherMemberNumber(this.membership);
+        if (expected === undefined) {
+            throw new Error('MLS bootstrap cannot add a member without an assigned member number');
+        }
         let addMemberFrame: Extract<DirectMlsBootstrapFrame, { kind: 'addMember' }> | undefined;
-        await this.mls.stageAddMember(this.conversationId, frame.keyPackage, ({ commit, welcome }) => {
-            addMemberFrame = {
-                kind: 'addMember',
-                routingId: frame.routingId,
-                commit,
-                welcome,
-            };
-            return encodeDirectMlsBootstrapFrame(addMemberFrame);
-        });
+        await this.mls.stageAddMember(
+            this.conversationId,
+            frame.keyPackage,
+            ({ commit, welcome }) => {
+                addMemberFrame = {
+                    kind: 'addMember',
+                    routingId: frame.routingId,
+                    commit,
+                    welcome,
+                };
+                return encodeDirectMlsBootstrapFrame(addMemberFrame);
+            },
+            expected,
+        );
         if (addMemberFrame === undefined) throw new Error('MLS add-member artifacts were not produced');
         this.companion = addMemberFrame;
         this.send(addMemberFrame);

@@ -16,7 +16,7 @@ export type ConnectionCallbacks = {
         send: (operation: ChatOperation) => Promise<ChatEventRecord | undefined>;
         history: {
             get: () => Promise<Array<ChatEventRecord>>;
-            save: (upserts: ReadonlyArray<ChatEventRecord>, deletes: ReadonlyArray<string>) => Promise<void>;
+            save: (upserts: ReadonlyArray<ChatEventRecord>) => Promise<void>;
             clear: (records: ReadonlyArray<ChatEventRecord>) => Promise<void>;
         };
     };
@@ -39,11 +39,7 @@ export type ConnectionCallbacksById = {
         send: (id: ConversationId, operation: ChatOperation) => Promise<ChatEventRecord | undefined>;
         history: {
             get: (id: ConversationId) => Promise<Array<ChatEventRecord>>;
-            save: (
-                id: ConversationId,
-                upserts: ReadonlyArray<ChatEventRecord>,
-                deletes: ReadonlyArray<string>,
-            ) => Promise<void>;
+            save: (id: ConversationId, upserts: ReadonlyArray<ChatEventRecord>) => Promise<void>;
             clear: (id: ConversationId, records: ReadonlyArray<ChatEventRecord>) => Promise<void>;
         };
     };
@@ -95,7 +91,7 @@ export function useConnectionCallbacksCache(
                 send: (operation) => bound.messaging.send(id, operation),
                 history: {
                     get: () => bound.messaging.history.get(id),
-                    save: (upserts, deletes) => bound.messaging.history.save(id, upserts, deletes),
+                    save: (upserts) => bound.messaging.history.save(id, upserts),
                     clear: (records) => bound.messaging.history.clear(id, records),
                 },
             },

@@ -1,4 +1,4 @@
-import { ChatStore, MessageKey, useMessageKeys, useTyping } from '../../../lib/chatStore';
+import { ChatStore, MessageKey, useMessage, useMessageKeys, useTyping } from '../../../lib/chatStore';
 import { ChatWindowMessageType } from '../../../types/chatMessageType';
 import { MemberNumber } from '../../../types/conversation';
 import { ArrowDownIcon } from '../../icons';
@@ -118,7 +118,7 @@ const MessageList: React.FC<MessageListProps> = ({
             pinningRef.current = false;
         }
         setTailLost(lost);
-    }, []);
+    }, [store]);
 
     const followBottom = useCallback(() => {
         if (stickToBottomRef.current) scrollToBottom();
@@ -231,6 +231,7 @@ const MessageList: React.FC<MessageListProps> = ({
             authorOf,
             onOpenAuthor,
             onOpenReceipts,
+            ownSeenOf,
         ],
     );
 
@@ -265,6 +266,12 @@ const MessageList: React.FC<MessageListProps> = ({
     );
 };
 
+/** Subscribes so a day label restamped at midnight ("Today" becoming "Yesterday") is redrawn. */
+const DayChip = React.memo<{ store: ChatStore; entry: MessageKey }>(function DayChip({ store, entry }) {
+    const marker = useMessage(store, entry);
+    return marker === undefined ? null : <div className='msg-chip msg-chip--day'>{marker.text}</div>;
+});
+
 type RowProps = {
     store: ChatStore;
     entry: ListEntry;
@@ -298,7 +305,10 @@ const Row = React.memo<RowProps>(function Row({ store, entry, ...handlers }) {
             data-entry={entry}
         >
             {isMarker ? (
-                record && <div className='msg-chip msg-chip--day'>{record.text}</div>
+                <DayChip
+                    store={store}
+                    entry={entry}
+                />
             ) : (
                 <MessageBubble
                     store={store}

@@ -1,5 +1,4 @@
 export const KDF_ITERATIONS = 600000;
-export const LEGACY_KDF_ITERATIONS = 100000;
 
 const PAD_BLOCK = 256;
 const IV_LENGTH = 12;
@@ -29,13 +28,12 @@ export interface Cryptography {
 
     encrypt(key: CryptoKey, value: unknown): Promise<EncryptedPayload>;
 
+    /** Encrypts bytes as they are; the JSON pair is for structured records. */
+    encryptBytes(key: CryptoKey, bytes: Uint8Array): Promise<EncryptedPayload>;
+
+    decryptBytes(key: CryptoKey, payload: EncryptedPayload): Promise<Uint8Array>;
+
     decrypt<TypeData>(key: CryptoKey, payload: EncryptedPayload): Promise<TypeData>;
-
-    legacyHashString(data: string): Promise<string>;
-
-    legacyDeriveKey(password: string, salt: Bytes): Promise<CryptoKey>;
-
-    legacyDecrypt<TypeData>(key: CryptoKey, iv: Bytes, encryptedData: Bytes): Promise<TypeData>;
 }
 
 function pad(payload: Uint8Array): Bytes {
@@ -111,25 +109,24 @@ export function getCryptography(): Cryptography {
         return { iv, data };
     }
 
+    async function encryptBytes(key: CryptoKey, bytes: Uint8Array): Promise<EncryptedPayload> {
+        const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+        const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, pad(bytes));
+        return { iv, data };
+    }
+
+    async function decryptBytes(key: CryptoKey, payload: EncryptedPayload): Promise<Uint8Array> {
+        const padded = new Uint8Array(
+            await crypto.subtle.decrypt({ name: 'AES-GCM', iv: payload.iv }, key, payload.data),
+        );
+        return unpad(padded);
+    }
+
     async function decrypt<TypeData>(key: CryptoKey, payload: EncryptedPayload): Promise<TypeData> {
         const padded = new Uint8Array(
             await crypto.subtle.decrypt({ name: 'AES-GCM', iv: payload.iv }, key, payload.data),
         );
         return JSON.parse(decoder.decode(unpad(padded))) as TypeData;
-    }
-
-    async function legacyHashString(data: string): Promise<string> {
-        const hashBytes = await crypto.subtle.digest('SHA-256', encoder.encode(data));
-        return new TextDecoder().decode(hashBytes);
-    }
-
-    async function legacyDeriveKey(password: string, salt: Bytes): Promise<CryptoKey> {
-        return await deriveKek(password, salt, LEGACY_KDF_ITERATIONS);
-    }
-
-    async function legacyDecrypt<TypeData>(key: CryptoKey, iv: Bytes, encryptedData: Bytes): Promise<TypeData> {
-        const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, encryptedData);
-        return JSON.parse(decoder.decode(decrypted)) as TypeData;
     }
 
     return {
@@ -138,9 +135,8 @@ export function getCryptography(): Cryptography {
         createDataKey,
         unwrapDataKey,
         encrypt,
+        encryptBytes,
+        decryptBytes,
         decrypt,
-        legacyHashString,
-        legacyDeriveKey,
-        legacyDecrypt,
     };
 }

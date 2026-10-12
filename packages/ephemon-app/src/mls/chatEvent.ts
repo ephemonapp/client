@@ -1,4 +1,3 @@
-import { ChatWindowMessageType } from '../types/chatMessageType';
 import { ChatOperation, InboundChatEvent } from '../types/chatOperation';
 import { ChatEventRecord, isChatMessageRecord } from '../types/chatRecord';
 import { MemberNumber } from '../types/conversation';
@@ -21,11 +20,20 @@ import {
     nextLocalHybridLogicalTime,
     requireAcceptableRemoteHybridLogicalTime,
 } from './hybridLogicalClock';
+import { decodeSignedApplicationEvent, encodeSignedApplicationEvent } from './signedEvent';
+import { otherMemberNumber } from './storedMembership';
 
 export type AcceptedChatEvent =
     | InboundChatEvent
     | { kind: 'inventory'; inventory: ChatInventory; reply: boolean }
-    | { kind: 'profile'; author: MemberNumber; name: string; locator: string; serverUrl?: string };
+    | { kind: 'profile'; author: MemberNumber; name: string; locator: string; serverUrl?: string }
+    | { kind: 'batch'; frames: ReadonlyArray<Uint8Array> };
+
+/** Signs the canonical event encoding with this member's own MLS signature key. */
+export type EventSigner = (bytes: Uint8Array) => Promise<Uint8Array>;
+
+/** Answers whether the named member signed these bytes. */
+export type EventVerifier = (author: MemberNumber, bytes: Uint8Array, signature: Uint8Array) => Promise<boolean>;
 
 export type AuthoredChatEvent = {
     bytes: Uint8Array;
@@ -41,14 +49,17 @@ function toLocalSender(author: MemberNumber, membership: DirectMlsMembership): '
 function toEventReply(
     reply: ReplyToMessageType | undefined,
     membership: DirectMlsMembership,
+    replyAuthor?: MemberNumber,
 ): ApplicationEventReply | undefined {
     if (reply === undefined) return undefined;
     if (reply.id === undefined || !isMlsEventId(reply.id)) {
         throw new Error('An MLS reply must reference a stored MLS event');
     }
+    const author = replyAuthor ?? (reply.sender === 'you' ? membership.ownMemberNumber : otherMemberNumber(membership));
+    if (author === undefined) return undefined;
     return {
         targetHash: mlsEventHash(reply.id),
-        authorMemberNumber: reply.sender === 'you' ? membership.ownMemberNumber : membership.peerMemberNumber,
+        authorMemberNumber: author,
         text: reply.text,
     };
 }
@@ -70,6 +81,8 @@ function toApplicationEvent(
     chain: ChatChainState,
     membership: DirectMlsMembership,
     time: HybridLogicalTime,
+    epoch: bigint,
+    replyAuthor?: MemberNumber,
 ): ApplicationEvent {
     if (operation.kind === 'typing') return { time, body: { kind: 'typing' } };
     const author = membership.ownMemberNumber;
@@ -80,10 +93,11 @@ function toApplicationEvent(
                 time,
                 author,
                 chain: position,
+                epoch,
                 body: {
                     kind: 'message.created',
                     text: operation.text,
-                    reply: toEventReply(operation.replyTo, membership),
+                    reply: toEventReply(operation.replyTo, membership, replyAuthor),
                 },
             };
         case 'delivered':
@@ -91,6 +105,7 @@ function toApplicationEvent(
                 time,
                 author,
                 chain: position,
+                epoch,
                 body: {
                     kind: 'message.delivered',
                     targetHash: requireHash(operation.target),
@@ -101,6 +116,7 @@ function toApplicationEvent(
                 time,
                 author,
                 chain: position,
+                epoch,
                 body: {
                     kind: 'message.seen',
                     targetHash: requireHash(operation.target),
@@ -111,6 +127,7 @@ function toApplicationEvent(
                 time,
                 author,
                 chain: position,
+                epoch,
                 body: {
                     kind: 'reaction.set',
                     targetHash: requireHash(operation.target),
@@ -118,6 +135,10 @@ function toApplicationEvent(
                 },
             };
     }
+}
+
+function unsignedFrame(bytes: Uint8Array): Uint8Array {
+    return encodeSignedApplicationEvent({ bytes, signature: new Uint8Array() });
 }
 
 function requireHash(target: EventId): Uint8Array {
@@ -131,23 +152,27 @@ export async function authorChatEvent(
     membership: DirectMlsMembership,
     observed: HybridLogicalTime | undefined,
     physicalNow: number,
-    epoch?: bigint,
+    sign: EventSigner,
+    epoch: bigint,
+    replyAuthor?: MemberNumber,
 ): Promise<AuthoredChatEvent> {
     const time = nextLocalHybridLogicalTime(observed, physicalNow);
-    const event = toApplicationEvent(operation, chain, membership, time);
-    const bytes = encodeApplicationEvent(event);
-    const hash = await applicationEventHash(bytes);
+    const event = toApplicationEvent(operation, chain, membership, time, epoch, replyAuthor);
+    const signed = encodeApplicationEvent(event);
+    const hash = await applicationEventHash(signed);
     const id = toMlsEventId(hash);
-    if (operation.kind === 'typing') return { bytes, id, chain };
+    if (operation.kind === 'typing') return { bytes: unsignedFrame(signed), id, chain };
+    const bytes = encodeSignedApplicationEvent({ bytes: signed, signature: await sign(signed) });
     const next: ChatChainState = { sequence: chain.sequence + 1, head: hash };
     const origin = {
         counter: time.counter,
         author: membership.ownMemberNumber,
         sequence: chain.sequence,
         event: encodeBase64Url(bytes),
-        epoch: epoch?.toString(),
+        epoch: epoch.toString(),
     };
     if (operation.kind === 'text') {
+        const quoted = event.body.kind === 'message.created' ? event.body.reply : undefined;
         return {
             bytes,
             id,
@@ -158,7 +183,7 @@ export async function authorChatEvent(
                 sender: 'you',
                 timestamp: time.physical,
                 text: operation.text,
-                reply_to: operation.replyTo,
+                reply_to: quoted === undefined ? undefined : operation.replyTo,
                 ...origin,
             },
         };
@@ -186,10 +211,12 @@ export async function authorProfileEvent(
     observed: HybridLogicalTime | undefined,
     physicalNow: number,
 ): Promise<Uint8Array> {
-    return encodeApplicationEvent({
-        time: nextLocalHybridLogicalTime(observed, physicalNow),
-        body: { kind: 'member.profile', name, locator, serverUrl },
-    });
+    return unsignedFrame(
+        encodeApplicationEvent({
+            time: nextLocalHybridLogicalTime(observed, physicalNow),
+            body: { kind: 'member.profile', name, locator, serverUrl },
+        }),
+    );
 }
 
 export async function authorInventoryEvent(
@@ -198,22 +225,58 @@ export async function authorInventoryEvent(
     observed: HybridLogicalTime | undefined,
     physicalNow: number,
 ): Promise<Uint8Array> {
-    return encodeApplicationEvent({
-        time: nextLocalHybridLogicalTime(observed, physicalNow),
-        body: { kind: 'sync.inventory', reply, frontier: encodeChatInventory(inventory) },
-    });
+    return unsignedFrame(
+        encodeApplicationEvent({
+            time: nextLocalHybridLogicalTime(observed, physicalNow),
+            body: { kind: 'sync.inventory', reply, frontier: encodeChatInventory(inventory) },
+        }),
+    );
+}
+
+export async function authorHistoryBatch(
+    frames: ReadonlyArray<Uint8Array>,
+    observed: HybridLogicalTime | undefined,
+    physicalNow: number,
+): Promise<Uint8Array> {
+    return unsignedFrame(
+        encodeApplicationEvent({
+            time: nextLocalHybridLogicalTime(observed, physicalNow),
+            body: { kind: 'history.batch', frames },
+        }),
+    );
 }
 
 export async function acceptChatEvent(
-    bytes: Uint8Array,
+    frame: Uint8Array,
     author: MemberNumber,
     membership: DirectMlsMembership,
     physicalNow: number,
-    epoch?: bigint,
+    verify: EventVerifier,
+    currentEpoch?: bigint,
 ): Promise<AcceptedChatEvent> {
+    const { bytes, signature } = decodeSignedApplicationEvent(frame);
     const event = decodeApplicationEvent(bytes);
     requireAcceptableRemoteHybridLogicalTime(event.time, physicalNow);
     const writer = isDurableApplicationEvent(event) ? event.author : author;
+    if (Number(writer) !== Number(author)) {
+        if (Number(writer) === Number(membership.ownMemberNumber)) {
+            throw new Error('An MLS event cannot claim to be authored by this member');
+        }
+        if (!membership.roster.some((member) => Number(member.memberNumber) === Number(writer))) {
+            throw new Error('An MLS event cannot claim to be authored by a member outside the roster');
+        }
+    }
+    if (isDurableApplicationEvent(event)) {
+        if (currentEpoch !== undefined && event.epoch > currentEpoch) {
+            throw new Error('An MLS event claims an epoch this member has not reached');
+        }
+        if (signature.byteLength === 0) throw new Error('A durable MLS event must carry its author signature');
+        if (!(await verify(writer, bytes, signature))) {
+            throw new Error(`An MLS event is not signed by member ${writer}`);
+        }
+    } else if (signature.byteLength !== 0) {
+        throw new Error('An ephemeral MLS event must not carry a signature');
+    }
     const sender = toLocalSender(writer, membership);
     if (!isDurableApplicationEvent(event)) {
         if (event.body.kind === 'member.profile') {
@@ -225,6 +288,7 @@ export async function acceptChatEvent(
                 serverUrl: event.body.serverUrl,
             };
         }
+        if (event.body.kind === 'history.batch') return { kind: 'batch', frames: event.body.frames };
         if (event.body.kind === 'sync.inventory') {
             return {
                 kind: 'inventory',
@@ -239,8 +303,8 @@ export async function acceptChatEvent(
         counter: event.time.counter,
         author: writer,
         sequence: event.chain.sequence,
-        event: encodeBase64Url(bytes),
-        epoch: epoch?.toString(),
+        event: encodeBase64Url(frame),
+        epoch: event.epoch.toString(),
     };
     if (event.body.kind === 'message.created') {
         return {
@@ -278,10 +342,6 @@ export async function acceptChatEvent(
 
 export function storedChatEventBytes(record: ChatEventRecord): Uint8Array | undefined {
     return record.event === undefined ? undefined : decodeBase64Url(record.event);
-}
-
-export function isOwnChatEventRecord(record: ChatEventRecord): boolean {
-    return record.sender === 'you' && record.event !== undefined;
 }
 
 export { isChatMessageRecord };

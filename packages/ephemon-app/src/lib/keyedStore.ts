@@ -29,9 +29,10 @@ export function createKeyedStore<T, Key extends string | number = string>(
                 listeners.set(key, subscribers);
             }
             subscribers.add(listener);
+            const registered = subscribers;
             return () => {
-                subscribers.delete(listener);
-                if (subscribers.size === 0) listeners.delete(key);
+                registered.delete(listener);
+                if (registered.size === 0 && listeners.get(key) === registered) listeners.delete(key);
             };
         },
         get(key) {

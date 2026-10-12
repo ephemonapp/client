@@ -2,12 +2,13 @@ import { ChatStore, MessageKey, useHighlighted, useMessage } from '../../../lib/
 import { fmtTime } from '../../../lib/time';
 import { ChatWindowMessageType } from '../../../types/chatMessageType';
 import { MemberNumber } from '../../../types/conversation';
-import { formatTimestampLong, now, serverTime } from '../../../utils/functions';
+import { formatTimestampLong, serverTime } from '../../../utils/functions';
 import { CheckIcon, DoubleCheckIcon, ReplyIcon, SmileyIcon, SpinnerIcon } from '../../icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 export type GroupAuthor = {
     publicKey: string;
+    memberNumber: number;
     name: string | undefined;
     display: string;
 };
@@ -92,7 +93,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
     const highlighted = useHighlighted(store, entry);
     const author = message?.sender === 'peer' ? authorOf?.(message.author) : undefined;
     const openAuthor = useCallback(() => {
-        if (author !== undefined) onOpenAuthor?.(author.publicKey, author.name);
+        // A member seated by a commit has no locator until its profile arrives; there is no code to show for it yet.
+        if (author !== undefined && author.publicKey.length > 0) onOpenAuthor?.(author.publicKey, author.name);
     }, [author, onOpenAuthor]);
 
     const topMarkerRef = useRef<HTMLDivElement>(null);
@@ -284,23 +286,10 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         if (message?.reply_to?.id !== undefined) onScrollToMessage(message.reply_to.id);
     }, [message, onScrollToMessage]);
 
-    if (!message) return null;
-
-    const isYou = message.sender === 'you';
-    const isReplyToYou = message.reply_to?.sender === 'you';
-    const chips = (message.reactions ?? []).filter((entry) => entry.value.length > 0);
-    const chipTitle = useCallback(
-        (authors: ReadonlyArray<MemberNumber>): string =>
-            authors.map((author) => authorOf?.(author)?.display ?? `Member ${Number(author)}`).join(', '),
-        [authorOf],
-    );
-    const hasReaction = chips.length > 0 || !!message.reaction?.value;
-    const chip = [...chips].sort((left, right) => right.authors.length - left.authors.length)[0];
-    const chipLabel =
-        chip === undefined ? '' : `${chip.value}${chip.authors.length > 1 ? ` ${chip.authors.length}` : ''}`;
     const openReceipts = useCallback(() => {
         if (message !== undefined) onOpenReceipts?.(message);
     }, [message, onOpenReceipts]);
+
     const openDetails = useCallback(
         (event: React.MouseEvent) => {
             event.stopPropagation();
@@ -308,6 +297,18 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         },
         [message, onOpenReceipts],
     );
+
+    if (!message) return null;
+
+    const isYou = message.sender === 'you';
+    const isReplyToYou = message.reply_to?.sender === 'you';
+    const chips = (message.reactions ?? []).filter((entry) => entry.value.length > 0);
+    const hasReaction = chips.length > 0;
+    const chip = [...chips].sort(
+        (left, right) => right.authors.length - left.authors.length || right.timestamp - left.timestamp,
+    )[0];
+    const chipLabel =
+        chip === undefined ? '' : `${chip.value}${chip.authors.length > 1 ? ` ${chip.authors.length}` : ''}`;
     const more =
         chips.length > 1 && onOpenReceipts !== undefined ? (
             <span
@@ -320,15 +321,20 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         ) : null;
     const marginBottom = hasReaction || !isYou ? 11 : 2;
 
-    const delta = now() - serverTime();
-    const messageTs = message.timestamp + delta;
-    const deliveredTs = message.delivered?.timestamp ? message.delivered.timestamp + delta : undefined;
-    const seenTs = message.seen?.timestamp ? message.seen.timestamp + delta : undefined;
-    const reactionTs = message.reaction?.timestamp ? message.reaction.timestamp + delta : undefined;
+    const messageTs = message.timestamp;
+    const deliveredTs = message.delivered?.timestamp;
+    const seenTs = message.seen?.timestamp;
+    const reactionTs = message.reaction?.timestamp;
 
     const mark = highlighted ? ' bubble--highlight' : '';
     const timeTitle = `${isYou ? 'Sent' : 'Received'} ${formatTimestampLong(messageTs)}`;
     const reactionTitle = reactionTs ? `Reacted ${formatTimestampLong(reactionTs)}` : undefined;
+    // `authorOf` resolves nothing outside a group, and a receipt there carries no author at all, so naming a member
+    // would show an internal number for a reaction that has exactly one owner: the peer.
+    const chipTitle = (authors: ReadonlyArray<MemberNumber>): string | undefined => {
+        const named = authors.map((member) => authorOf?.(member)?.display).filter((display) => display !== undefined);
+        return named.length === 0 ? reactionTitle : named.join(', ');
+    };
 
     const replyQuote = message.reply_to ? (
         <div
@@ -385,7 +391,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                             Try again?
                         </button>
                     )}
-                    {chip !== undefined ? (
+                    {chip !== undefined && (
                         <span
                             className='bubble__reaction'
                             title={chipTitle(chip.authors)}
@@ -394,15 +400,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                             <span className='bubble__reaction-value'>{chipLabel}</span>
                             {more}
                         </span>
-                    ) : (
-                        hasReaction && (
-                            <span
-                                className='bubble__reaction'
-                                title={reactionTitle}
-                            >
-                                {message.reaction!.value}
-                            </span>
-                        )
                     )}
                 </div>
             </div>
@@ -434,6 +431,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                         onClick={openAuthor}
                     >
                         {author.display}
+                        <span className='bubble__author-member'>{author.memberNumber}</span>
                     </span>
                 )}
                 {replyQuote}
@@ -454,14 +452,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                     >
                         <span className='bubble__reaction-value'>{chipLabel}</span>
                         {more}
-                    </span>
-                ) : hasReaction ? (
-                    <span
-                        className='bubble__reaction bubble__reaction--peer'
-                        title={reactionTitle}
-                        onClick={react}
-                    >
-                        {message.reaction!.value}
                     </span>
                 ) : (
                     <span

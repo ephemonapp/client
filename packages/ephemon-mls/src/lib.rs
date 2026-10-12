@@ -7,16 +7,13 @@ use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use openmls_traits::OpenMlsProvider;
+use openmls_traits::crypto::OpenMlsCrypto;
+use openmls_traits::signatures::Signer;
 use openmls_traits::types::Ciphersuite;
 use wasm_bindgen::prelude::*;
 
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 5;
 
-const CHECKPOINT_MAGIC: &[u8; 8] = b"EPHMLSCP";
-const CHECKPOINT_VERSION: u16 = 1;
-const MAX_CHECKPOINT_BYTES: usize = 64 * 1024 * 1024;
-const MAX_CHECKPOINT_ENTRIES: usize = 16_384;
-const MAX_CHECKPOINT_FIELD_BYTES: usize = 16 * 1024 * 1024;
 const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 
 #[unsafe(no_mangle)]
@@ -53,26 +50,29 @@ impl Error for MlsFacadeError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddMemberOutput {
+    pub claimed_identity: Vec<u8>,
     pub commit: Vec<u8>,
     pub welcome: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommitOutcome {
-    pub sender_member_number: u32,
+pub struct CommitFacts {
+    pub sender_identity: Vec<u8>,
+    pub sender_is_member: bool,
+    pub added: Vec<Vec<u8>>,
+    pub removed_leaves: Vec<u32>,
     pub epoch: u64,
-    pub added: Vec<u32>,
-    pub removed: Vec<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessedApplicationMessage {
-    pub sender_member_number: u32,
+    pub sender_identity: Vec<u8>,
+    pub sender_is_member: bool,
     pub payload: Vec<u8>,
 }
 
 pub struct MlsClient {
-    member_number: u32,
+    identity: Vec<u8>,
     credential: CredentialWithKey,
     signer: SignatureKeyPair,
     provider: OpenMlsRustCrypto,
@@ -80,17 +80,17 @@ pub struct MlsClient {
 }
 
 impl MlsClient {
-    pub fn new(member_number: u32) -> Result<Self, MlsFacadeError> {
+    pub fn new(identity: Vec<u8>) -> Result<Self, MlsFacadeError> {
         let provider = OpenMlsRustCrypto::default();
         let signer = SignatureKeyPair::new(CIPHERSUITE.signature_algorithm())
             .map_err(|error| MlsFacadeError::debug("generate group signing key", error))?;
         signer
             .store(provider.storage())
             .map_err(|error| MlsFacadeError::debug("store group signing key", error))?;
-        let credential = credential_for(member_number, &signer);
+        let credential = credential_for(&identity, &signer);
 
         Ok(Self {
-            member_number,
+            identity,
             credential,
             signer,
             provider,
@@ -98,8 +98,8 @@ impl MlsClient {
         })
     }
 
-    pub fn member_number(&self) -> u32 {
-        self.member_number
+    pub fn identity(&self) -> Vec<u8> {
+        self.identity.clone()
     }
 
     pub fn create_group(&mut self, group_id: &[u8]) -> Result<(), MlsFacadeError> {
@@ -165,6 +165,11 @@ impl MlsClient {
                 ));
             }
         };
+        let claimed_identity = key_package
+            .leaf_node()
+            .credential()
+            .serialized_content()
+            .to_vec();
         let provider = &self.provider;
         let signer = &self.signer;
         let group = self
@@ -176,6 +181,7 @@ impl MlsClient {
             .map_err(|error| MlsFacadeError::debug("stage add member", error))?;
 
         Ok(AddMemberOutput {
+            claimed_identity,
             commit: commit
                 .to_bytes()
                 .map_err(|error| MlsFacadeError::debug("serialize add commit", error))?,
@@ -206,8 +212,7 @@ impl MlsClient {
     pub fn process_incoming_commit(
         &mut self,
         message_bytes: &[u8],
-        authorized_committers: &[u32],
-    ) -> Result<CommitOutcome, MlsFacadeError> {
+    ) -> Result<CommitFacts, MlsFacadeError> {
         let message = deserialize_mls_message("deserialize commit", message_bytes)?;
         let protocol_message = message
             .try_into_protocol_message()
@@ -220,7 +225,8 @@ impl MlsClient {
         let processed = group
             .process_message(provider, protocol_message)
             .map_err(|error| MlsFacadeError::debug("process commit", error))?;
-        let sender_member_number = member_number_from_credential(processed.credential())?;
+        let sender_is_member = matches!(processed.sender(), Sender::Member(_));
+        let sender_identity = processed.credential().serialized_content().to_vec();
         let staged = match processed.into_content() {
             ProcessedMessageContent::StagedCommitMessage(staged) => *staged,
             _ => {
@@ -230,36 +236,31 @@ impl MlsClient {
                 ));
             }
         };
-        if !authorized_committers.contains(&sender_member_number) {
-            return Err(MlsFacadeError::new(
-                "authorize commit",
-                "committer is not authorized by the conversation policy",
-            ));
-        }
         let added = staged
             .add_proposals()
             .map(|proposal| {
-                member_number_from_credential(
-                    proposal
-                        .add_proposal()
-                        .key_package()
-                        .leaf_node()
-                        .credential(),
-                )
+                proposal
+                    .add_proposal()
+                    .key_package()
+                    .leaf_node()
+                    .credential()
+                    .serialized_content()
+                    .to_vec()
             })
-            .collect::<Result<Vec<u32>, MlsFacadeError>>()?;
-        let removed = staged
+            .collect::<Vec<Vec<u8>>>();
+        let removed_leaves = staged
             .remove_proposals()
             .map(|proposal| proposal.remove_proposal().removed().u32())
             .collect::<Vec<u32>>();
         group
             .merge_staged_commit(provider, staged)
             .map_err(|error| MlsFacadeError::debug("merge staged commit", error))?;
-        Ok(CommitOutcome {
-            sender_member_number,
-            epoch: group.epoch().as_u64(),
+        Ok(CommitFacts {
+            sender_identity,
+            sender_is_member,
             added,
-            removed,
+            removed_leaves,
+            epoch: group.epoch().as_u64(),
         })
     }
 
@@ -299,13 +300,12 @@ impl MlsClient {
                 ));
             }
         };
-        let staged = StagedWelcome::new_from_welcome(
-            &self.provider,
-            &MlsGroupJoinConfig::default(),
-            welcome,
-            None,
-        )
-        .map_err(|error| MlsFacadeError::debug("stage welcome", error))?;
+        let join_config = MlsGroupJoinConfig::builder()
+            .wire_format_policy(PURE_CIPHERTEXT_WIRE_FORMAT_POLICY)
+            .use_ratchet_tree_extension(true)
+            .build();
+        let staged = StagedWelcome::new_from_welcome(&self.provider, &join_config, welcome, None)
+            .map_err(|error| MlsFacadeError::debug("stage welcome", error))?;
         let group = staged
             .into_group(&self.provider)
             .map_err(|error| MlsFacadeError::debug("join from welcome", error))?;
@@ -347,7 +347,8 @@ impl MlsClient {
             })?
             .process_message(provider, protocol_message)
             .map_err(|error| MlsFacadeError::debug("process application message", error))?;
-        let sender_member_number = member_number_from_credential(processed.credential())?;
+        let sender_is_member = matches!(processed.sender(), Sender::Member(_));
+        let sender_identity = processed.credential().serialized_content().to_vec();
         let payload = match processed.into_content() {
             ProcessedMessageContent::ApplicationMessage(application) => application.into_bytes(),
             _ => {
@@ -359,7 +360,8 @@ impl MlsClient {
         };
 
         Ok(ProcessedApplicationMessage {
-            sender_member_number,
+            sender_identity,
+            sender_is_member,
             payload,
         })
     }
@@ -374,126 +376,173 @@ impl MlsClient {
         self.group.as_ref().map(|group| group.epoch().as_u64())
     }
 
-    pub fn member_numbers(&self) -> Result<Vec<u32>, MlsFacadeError> {
+    pub fn member_identities(&self) -> Result<Vec<Vec<u8>>, MlsFacadeError> {
         let group = self
             .group
             .as_ref()
             .ok_or_else(|| MlsFacadeError::new("inspect members", "group is not initialized"))?;
         group
             .members()
-            .map(|member| member_number_from_credential(&member.credential))
+            .map(|member| Ok(member.credential.serialized_content().to_vec()))
             .collect()
     }
 
-    pub fn export_checkpoint(&self) -> Result<Vec<u8>, MlsFacadeError> {
-        let values =
-            self.provider.storage().values.read().map_err(|_| {
-                MlsFacadeError::new("export checkpoint", "storage lock is poisoned")
-            })?;
-        if values.len() > MAX_CHECKPOINT_ENTRIES {
-            return Err(MlsFacadeError::new(
-                "export checkpoint",
-                "storage entry limit exceeded",
-            ));
-        }
-        let mut entries: Vec<_> = values.iter().collect();
-        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
-
-        let mut checkpoint = Vec::new();
-        checkpoint.extend_from_slice(CHECKPOINT_MAGIC);
-        checkpoint.extend_from_slice(&CHECKPOINT_VERSION.to_be_bytes());
-        checkpoint.extend_from_slice(&self.member_number.to_be_bytes());
-        write_field(&mut checkpoint, self.signer.public(), "signing public key")?;
-        write_field(
-            &mut checkpoint,
-            self.group_id().as_deref().unwrap_or_default(),
-            "group id",
-        )?;
-        write_u32(&mut checkpoint, entries.len(), "storage entry count")?;
-        for (key, value) in entries {
-            write_field(&mut checkpoint, key, "storage key")?;
-            write_field(&mut checkpoint, value, "storage value")?;
-        }
-        if checkpoint.len() > MAX_CHECKPOINT_BYTES {
-            return Err(MlsFacadeError::new(
-                "export checkpoint",
-                "checkpoint byte limit exceeded",
-            ));
-        }
-        Ok(checkpoint)
+    /// Signs under a label of its own so a signature produced here can never be read as MLS protocol traffic.
+    pub fn sign(&self, message: &[u8]) -> Result<Vec<u8>, MlsFacadeError> {
+        self.signer
+            .sign(&labelled(message))
+            .map_err(|error| MlsFacadeError::debug("sign", error))
     }
 
-    pub fn import_checkpoint(checkpoint: &[u8]) -> Result<Self, MlsFacadeError> {
-        if checkpoint.len() > MAX_CHECKPOINT_BYTES {
+    pub fn verify(&self, signature_public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
+        self.provider
+            .crypto()
+            .verify_signature(
+                CIPHERSUITE.signature_algorithm(),
+                &labelled(message),
+                signature_public_key,
+                signature,
+            )
+            .is_ok()
+    }
+
+    pub fn member_signature_keys(&self) -> Result<Vec<Vec<u8>>, MlsFacadeError> {
+        let group = self
+            .group
+            .as_ref()
+            .ok_or_else(|| MlsFacadeError::new("inspect members", "group is not initialized"))?;
+        Ok(group
+            .members()
+            .map(|member| member.signature_key.to_vec())
+            .collect())
+    }
+
+    pub fn storage_snapshot(&self) -> Result<Vec<u8>, MlsFacadeError> {
+        let (keys, key_lengths, values, value_lengths) = self.storage_halves()?;
+        let mut snapshot =
+            Vec::with_capacity(8 + key_lengths.len() * 8 + keys.len() + values.len());
+        snapshot.extend_from_slice(&(key_lengths.len() as u32).to_be_bytes());
+        snapshot.extend_from_slice(&(keys.len() as u32).to_be_bytes());
+        for length in &key_lengths {
+            snapshot.extend_from_slice(&length.to_be_bytes());
+        }
+        for length in &value_lengths {
+            snapshot.extend_from_slice(&length.to_be_bytes());
+        }
+        snapshot.extend_from_slice(&keys);
+        snapshot.extend_from_slice(&values);
+        Ok(snapshot)
+    }
+
+    fn storage_halves(&self) -> Result<(Vec<u8>, Vec<u32>, Vec<u8>, Vec<u32>), MlsFacadeError> {
+        let values =
+            self.provider.storage().values.read().map_err(|_| {
+                MlsFacadeError::new("read storage entries", "storage lock is poisoned")
+            })?;
+        let mut entries: Vec<_> = values.iter().collect();
+        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+        let mut keys = Vec::new();
+        let mut key_lengths = Vec::with_capacity(entries.len());
+        let mut blobs = Vec::new();
+        let mut blob_lengths = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            key_lengths.push(u32::try_from(key.len()).map_err(|_| {
+                MlsFacadeError::new("read storage entries", "storage key is too long")
+            })?);
+            keys.extend_from_slice(key);
+            blob_lengths.push(u32::try_from(value.len()).map_err(|_| {
+                MlsFacadeError::new("read storage entries", "storage value is too long")
+            })?);
+            blobs.extend_from_slice(value);
+        }
+        Ok((keys, key_lengths, blobs, blob_lengths))
+    }
+
+    pub fn signing_public_key(&self) -> Vec<u8> {
+        self.signer.public().to_vec()
+    }
+
+    pub fn restore(
+        identity: Vec<u8>,
+        signing_public_key: &[u8],
+        group_id: &[u8],
+        keys: &[u8],
+        key_lengths: &[u32],
+        blobs: &[u8],
+        blob_lengths: &[u32],
+    ) -> Result<Self, MlsFacadeError> {
+        if key_lengths.len() != blob_lengths.len() {
             return Err(MlsFacadeError::new(
-                "import checkpoint",
-                "checkpoint byte limit exceeded",
+                "restore",
+                "storage halves disagree on entry count",
             ));
         }
-        let mut reader = CheckpointReader::new(checkpoint);
-        if reader.take(CHECKPOINT_MAGIC.len())? != CHECKPOINT_MAGIC {
-            return Err(MlsFacadeError::new(
-                "import checkpoint",
-                "checkpoint magic does not match",
-            ));
-        }
-        let version = reader.read_u16()?;
-        if version != CHECKPOINT_VERSION {
-            return Err(MlsFacadeError::new(
-                "import checkpoint",
-                format!("unsupported checkpoint version {version}"),
-            ));
-        }
-        let member_number = reader.read_u32()?;
-        let signing_public_key = reader.read_field()?.to_vec();
-        let group_id = reader.read_field()?.to_vec();
-        let entry_count = reader.read_u32()? as usize;
-        if entry_count > MAX_CHECKPOINT_ENTRIES {
-            return Err(MlsFacadeError::new(
-                "import checkpoint",
-                "storage entry limit exceeded",
-            ));
-        }
-        let mut entries = HashMap::with_capacity(entry_count);
-        for _ in 0..entry_count {
-            let key = reader.read_field()?.to_vec();
-            let value = reader.read_field()?.to_vec();
-            if entries.insert(key, value).is_some() {
+        let mut entries = HashMap::with_capacity(key_lengths.len());
+        let mut key_offset = 0usize;
+        let mut blob_offset = 0usize;
+        for (key_length, blob_length) in key_lengths.iter().zip(blob_lengths.iter()) {
+            let key_end = usize::try_from(*key_length)
+                .ok()
+                .and_then(|length| key_offset.checked_add(length))
+                .ok_or_else(|| MlsFacadeError::new("restore", "storage halves are truncated"))?;
+            let blob_end = usize::try_from(*blob_length)
+                .ok()
+                .and_then(|length| blob_offset.checked_add(length))
+                .ok_or_else(|| MlsFacadeError::new("restore", "storage halves are truncated"))?;
+            if key_end > keys.len() || blob_end > blobs.len() {
                 return Err(MlsFacadeError::new(
-                    "import checkpoint",
-                    "duplicate storage key",
+                    "restore",
+                    "storage halves are truncated",
                 ));
             }
+            if entries
+                .insert(
+                    keys[key_offset..key_end].to_vec(),
+                    blobs[blob_offset..blob_end].to_vec(),
+                )
+                .is_some()
+            {
+                return Err(MlsFacadeError::new("restore", "duplicate storage key"));
+            }
+            key_offset = key_end;
+            blob_offset = blob_end;
         }
-        reader.finish()?;
+        if key_offset != keys.len() || blob_offset != blobs.len() {
+            return Err(MlsFacadeError::new(
+                "restore",
+                "storage halves carry trailing bytes",
+            ));
+        }
 
         let provider = OpenMlsRustCrypto::default();
         {
-            let mut values = provider.storage().values.write().map_err(|_| {
-                MlsFacadeError::new("import checkpoint", "storage lock is poisoned")
-            })?;
+            let mut values = provider
+                .storage()
+                .values
+                .write()
+                .map_err(|_| MlsFacadeError::new("restore", "storage lock is poisoned"))?;
             *values = entries;
         }
         let signer = SignatureKeyPair::read(
             provider.storage(),
-            &signing_public_key,
+            signing_public_key,
             CIPHERSUITE.signature_algorithm(),
         )
-        .ok_or_else(|| MlsFacadeError::new("import checkpoint", "group signing key is missing"))?;
-        let credential = credential_for(member_number, &signer);
+        .ok_or_else(|| MlsFacadeError::new("restore", "group signing key is missing"))?;
+        let credential = credential_for(&identity, &signer);
         let group = if group_id.is_empty() {
             None
         } else {
-            MlsGroup::load(provider.storage(), &GroupId::from_slice(&group_id))
-                .map_err(|error| MlsFacadeError::debug("load group checkpoint", error))?
-                .ok_or_else(|| {
-                    MlsFacadeError::new("load group checkpoint", "group state is missing")
-                })?
-                .into()
+            Some(
+                MlsGroup::load(provider.storage(), &GroupId::from_slice(group_id))
+                    .map_err(|error| MlsFacadeError::debug("restore group", error))?
+                    .ok_or_else(|| {
+                        MlsFacadeError::new("restore group", "group state is missing")
+                    })?,
+            )
         };
-
         Ok(Self {
-            member_number,
+            identity,
             credential,
             signer,
             provider,
@@ -502,22 +551,11 @@ impl MlsClient {
     }
 }
 
-fn credential_for(member_number: u32, signer: &SignatureKeyPair) -> CredentialWithKey {
+fn credential_for(identity: &[u8], signer: &SignatureKeyPair) -> CredentialWithKey {
     CredentialWithKey {
-        credential: BasicCredential::new(member_number.to_be_bytes().to_vec()).into(),
+        credential: BasicCredential::new(identity.to_vec()).into(),
         signature_key: signer.to_public_vec().into(),
     }
-}
-
-fn member_number_from_credential(credential: &Credential) -> Result<u32, MlsFacadeError> {
-    let bytes = credential.serialized_content();
-    let encoded: [u8; 4] = bytes.try_into().map_err(|_| {
-        MlsFacadeError::new(
-            "decode member number",
-            "BasicCredential identity must contain exactly four bytes",
-        )
-    })?;
-    Ok(u32::from_be_bytes(encoded))
 }
 
 fn deserialize_mls_message(
@@ -528,95 +566,24 @@ fn deserialize_mls_message(
         .map_err(|error| MlsFacadeError::debug(operation, error))
 }
 
-fn write_u32(
-    output: &mut Vec<u8>,
-    value: usize,
-    field: &'static str,
-) -> Result<(), MlsFacadeError> {
-    let value = u32::try_from(value)
-        .map_err(|_| MlsFacadeError::new("export checkpoint", format!("{field} is too large")))?;
-    output.extend_from_slice(&value.to_be_bytes());
-    Ok(())
+const SIGNATURE_LABEL: &[u8] = b"ephemon application event v1";
+
+fn labelled(message: &[u8]) -> Vec<u8> {
+    let mut labelled = Vec::with_capacity(SIGNATURE_LABEL.len() + 8 + message.len());
+    labelled.extend_from_slice(SIGNATURE_LABEL);
+    labelled.extend_from_slice(&(message.len() as u64).to_be_bytes());
+    labelled.extend_from_slice(message);
+    labelled
 }
 
-fn write_field(
-    output: &mut Vec<u8>,
-    value: &[u8],
-    field: &'static str,
-) -> Result<(), MlsFacadeError> {
-    if value.len() > MAX_CHECKPOINT_FIELD_BYTES {
-        return Err(MlsFacadeError::new(
-            "export checkpoint",
-            format!("{field} exceeds its byte limit"),
-        ));
+fn flatten(items: &[Vec<u8>]) -> (Vec<u8>, Vec<u32>) {
+    let mut bytes = Vec::new();
+    let mut lengths = Vec::with_capacity(items.len());
+    for item in items {
+        lengths.push(item.len() as u32);
+        bytes.extend_from_slice(item);
     }
-    write_u32(output, value.len(), field)?;
-    output.extend_from_slice(value);
-    Ok(())
-}
-
-struct CheckpointReader<'a> {
-    bytes: &'a [u8],
-    offset: usize,
-}
-
-impl<'a> CheckpointReader<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, offset: 0 }
-    }
-
-    fn take(&mut self, length: usize) -> Result<&'a [u8], MlsFacadeError> {
-        let end = self.offset.checked_add(length).ok_or_else(|| {
-            MlsFacadeError::new("import checkpoint", "checkpoint length overflow")
-        })?;
-        if end > self.bytes.len() {
-            return Err(MlsFacadeError::new(
-                "import checkpoint",
-                "checkpoint is truncated",
-            ));
-        }
-        let value = &self.bytes[self.offset..end];
-        self.offset = end;
-        Ok(value)
-    }
-
-    fn read_u16(&mut self) -> Result<u16, MlsFacadeError> {
-        let bytes: [u8; 2] = self
-            .take(2)?
-            .try_into()
-            .map_err(|_| MlsFacadeError::new("import checkpoint", "invalid u16"))?;
-        Ok(u16::from_be_bytes(bytes))
-    }
-
-    fn read_u32(&mut self) -> Result<u32, MlsFacadeError> {
-        let bytes: [u8; 4] = self
-            .take(4)?
-            .try_into()
-            .map_err(|_| MlsFacadeError::new("import checkpoint", "invalid u32"))?;
-        Ok(u32::from_be_bytes(bytes))
-    }
-
-    fn read_field(&mut self) -> Result<&'a [u8], MlsFacadeError> {
-        let length = self.read_u32()? as usize;
-        if length > MAX_CHECKPOINT_FIELD_BYTES {
-            return Err(MlsFacadeError::new(
-                "import checkpoint",
-                "checkpoint field exceeds its byte limit",
-            ));
-        }
-        self.take(length)
-    }
-
-    fn finish(self) -> Result<(), MlsFacadeError> {
-        if self.offset == self.bytes.len() {
-            Ok(())
-        } else {
-            Err(MlsFacadeError::new(
-                "import checkpoint",
-                "checkpoint contains trailing bytes",
-            ))
-        }
-    }
+    (bytes, lengths)
 }
 
 fn as_js_error(error: MlsFacadeError) -> JsError {
@@ -631,22 +598,39 @@ pub struct WasmMlsClient {
 #[wasm_bindgen(js_class = EphemonMlsClient)]
 impl WasmMlsClient {
     #[wasm_bindgen(constructor)]
-    pub fn new(member_number: u32) -> Result<WasmMlsClient, JsError> {
+    pub fn new(identity: Vec<u8>) -> Result<WasmMlsClient, JsError> {
         Ok(Self {
-            inner: MlsClient::new(member_number).map_err(as_js_error)?,
+            inner: MlsClient::new(identity).map_err(as_js_error)?,
         })
     }
 
-    #[wasm_bindgen(js_name = importCheckpoint)]
-    pub fn import_checkpoint(checkpoint: &[u8]) -> Result<WasmMlsClient, JsError> {
+    #[wasm_bindgen]
+    pub fn restore(
+        identity: Vec<u8>,
+        signing_public_key: &[u8],
+        group_id: &[u8],
+        keys: &[u8],
+        key_lengths: Vec<u32>,
+        blobs: &[u8],
+        blob_lengths: Vec<u32>,
+    ) -> Result<WasmMlsClient, JsError> {
         Ok(Self {
-            inner: MlsClient::import_checkpoint(checkpoint).map_err(as_js_error)?,
+            inner: MlsClient::restore(
+                identity,
+                signing_public_key,
+                group_id,
+                keys,
+                &key_lengths,
+                blobs,
+                &blob_lengths,
+            )
+            .map_err(as_js_error)?,
         })
     }
 
-    #[wasm_bindgen(getter, js_name = memberNumber)]
-    pub fn member_number(&self) -> u32 {
-        self.inner.member_number()
+    #[wasm_bindgen(getter)]
+    pub fn identity(&self) -> Vec<u8> {
+        self.inner.identity()
     }
 
     #[wasm_bindgen(js_name = createGroup)]
@@ -665,15 +649,11 @@ impl WasmMlsClient {
     }
 
     #[wasm_bindgen(js_name = processIncomingCommit)]
-    pub fn process_incoming_commit(
-        &mut self,
-        message: &[u8],
-        authorized_committers: Vec<u32>,
-    ) -> Result<WasmCommitOutcome, JsError> {
-        Ok(WasmCommitOutcome {
+    pub fn process_incoming_commit(&mut self, message: &[u8]) -> Result<WasmCommitFacts, JsError> {
+        Ok(WasmCommitFacts {
             inner: self
                 .inner
-                .process_incoming_commit(message, &authorized_committers)
+                .process_incoming_commit(message)
                 .map_err(as_js_error)?,
         })
     }
@@ -723,9 +703,49 @@ impl WasmMlsClient {
         })
     }
 
-    #[wasm_bindgen(js_name = exportCheckpoint)]
-    pub fn export_checkpoint(&self) -> Result<Vec<u8>, JsError> {
-        self.inner.export_checkpoint().map_err(as_js_error)
+    fn flat_members(&self) -> Result<(Vec<u8>, Vec<u32>), JsError> {
+        Ok(flatten(
+            &self.inner.member_identities().map_err(as_js_error)?,
+        ))
+    }
+
+    fn flat_signature_keys(&self) -> Result<(Vec<u8>, Vec<u32>), JsError> {
+        Ok(flatten(
+            &self.inner.member_signature_keys().map_err(as_js_error)?,
+        ))
+    }
+
+    #[wasm_bindgen(js_name = memberSignatureKeys)]
+    pub fn member_signature_keys(&self) -> Result<Vec<u8>, JsError> {
+        Ok(self.flat_signature_keys()?.0)
+    }
+
+    #[wasm_bindgen(js_name = memberSignatureKeyLengths)]
+    pub fn member_signature_key_lengths(&self) -> Result<Vec<u32>, JsError> {
+        Ok(self.flat_signature_keys()?.1)
+    }
+
+    pub fn sign(&self, message: &[u8]) -> Result<Vec<u8>, JsError> {
+        self.inner.sign(message).map_err(as_js_error)
+    }
+
+    pub fn verify(&self, signature_public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
+        self.inner.verify(signature_public_key, message, signature)
+    }
+
+    #[wasm_bindgen(js_name = storageSnapshot)]
+    pub fn storage_snapshot(&self) -> Result<Vec<u8>, JsError> {
+        self.inner.storage_snapshot().map_err(as_js_error)
+    }
+
+    #[wasm_bindgen(getter, js_name = signingPublicKey)]
+    pub fn signing_public_key(&self) -> Vec<u8> {
+        self.inner.signing_public_key()
+    }
+
+    #[wasm_bindgen(getter, js_name = groupId)]
+    pub fn group_id_bytes(&self) -> Vec<u8> {
+        self.inner.group_id().unwrap_or_default()
     }
 
     pub fn epoch(&self) -> Result<u64, JsError> {
@@ -734,9 +754,14 @@ impl WasmMlsClient {
             .ok_or_else(|| JsError::new("inspect epoch failed: group is not initialized"))
     }
 
-    #[wasm_bindgen(js_name = memberNumbers)]
-    pub fn member_numbers(&self) -> Result<Vec<u32>, JsError> {
-        self.inner.member_numbers().map_err(as_js_error)
+    #[wasm_bindgen(js_name = memberIdentities)]
+    pub fn member_identities(&self) -> Result<Vec<u8>, JsError> {
+        Ok(self.flat_members()?.0)
+    }
+
+    #[wasm_bindgen(js_name = memberIdentityLengths)]
+    pub fn member_identity_lengths(&self) -> Result<Vec<u32>, JsError> {
+        Ok(self.flat_members()?.1)
     }
 }
 
@@ -747,6 +772,11 @@ pub struct WasmAddMemberOutput {
 
 #[wasm_bindgen(js_class = EphemonMlsAddMemberOutput)]
 impl WasmAddMemberOutput {
+    #[wasm_bindgen(getter, js_name = claimedIdentity)]
+    pub fn claimed_identity(&self) -> Vec<u8> {
+        self.inner.claimed_identity.clone()
+    }
+
     #[wasm_bindgen(getter)]
     pub fn commit(&self) -> Vec<u8> {
         self.inner.commit.clone()
@@ -758,31 +788,45 @@ impl WasmAddMemberOutput {
     }
 }
 
-#[wasm_bindgen(js_name = EphemonMlsCommitOutcome)]
-pub struct WasmCommitOutcome {
-    inner: CommitOutcome,
+#[wasm_bindgen(js_name = EphemonMlsCommitFacts)]
+pub struct WasmCommitFacts {
+    inner: CommitFacts,
 }
 
-#[wasm_bindgen(js_class = EphemonMlsCommitOutcome)]
-impl WasmCommitOutcome {
-    #[wasm_bindgen(getter, js_name = senderMemberNumber)]
-    pub fn sender_member_number(&self) -> u32 {
-        self.inner.sender_member_number
+#[wasm_bindgen(js_class = EphemonMlsCommitFacts)]
+impl WasmCommitFacts {
+    #[wasm_bindgen(getter, js_name = senderIdentity)]
+    pub fn sender_identity(&self) -> Vec<u8> {
+        self.inner.sender_identity.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = senderIsMember)]
+    pub fn sender_is_member(&self) -> bool {
+        self.inner.sender_is_member
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn added(&self) -> Vec<u8> {
+        self.inner.added.concat()
+    }
+
+    #[wasm_bindgen(getter, js_name = addedLengths)]
+    pub fn added_lengths(&self) -> Vec<u32> {
+        self.inner
+            .added
+            .iter()
+            .map(|item| item.len() as u32)
+            .collect()
+    }
+
+    #[wasm_bindgen(getter, js_name = removedLeaves)]
+    pub fn removed_leaves(&self) -> Vec<u32> {
+        self.inner.removed_leaves.clone()
     }
 
     #[wasm_bindgen(getter)]
     pub fn epoch(&self) -> u64 {
         self.inner.epoch
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn added(&self) -> Vec<u32> {
-        self.inner.added.clone()
-    }
-
-    #[wasm_bindgen(getter)]
-    pub fn removed(&self) -> Vec<u32> {
-        self.inner.removed.clone()
     }
 }
 
@@ -793,9 +837,14 @@ pub struct WasmProcessedApplicationMessage {
 
 #[wasm_bindgen(js_class = EphemonMlsProcessedApplicationMessage)]
 impl WasmProcessedApplicationMessage {
-    #[wasm_bindgen(getter, js_name = senderMemberNumber)]
-    pub fn sender_member_number(&self) -> u32 {
-        self.inner.sender_member_number
+    #[wasm_bindgen(getter, js_name = senderIdentity)]
+    pub fn sender_identity(&self) -> Vec<u8> {
+        self.inner.sender_identity.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = senderIsMember)]
+    pub fn sender_is_member(&self) -> bool {
+        self.inner.sender_is_member
     }
 
     #[wasm_bindgen(getter)]
@@ -808,9 +857,12 @@ impl WasmProcessedApplicationMessage {
 mod tests {
     use super::*;
 
+    const ALICE: &[u8] = b"alice";
+    const BOB: &[u8] = b"bob";
+
     fn joined_pair() -> (MlsClient, MlsClient, AddMemberOutput) {
-        let mut alice = MlsClient::new(0).expect("Alice client");
-        let mut bob = MlsClient::new(1).expect("Bob client");
+        let mut alice = MlsClient::new(ALICE.to_vec()).expect("Alice client");
+        let mut bob = MlsClient::new(BOB.to_vec()).expect("Bob client");
         alice.create_group(b"ephemon-test-group").expect("group");
         let bob_key_package = bob.create_key_package().expect("Bob key package");
         let add = alice
@@ -827,143 +879,200 @@ mod tests {
     }
 
     #[test]
-    fn refuses_a_commit_from_a_member_the_policy_does_not_authorize() {
-        let (mut alice, mut bob, _) = joined_pair();
-        let commit = bob.create_self_update().expect("Bob self update");
-        bob.merge_pending_commit()
-            .expect("Bob merges its own commit");
+    fn reports_what_a_key_package_claims_without_judging_it() {
+        let mut alice = MlsClient::new(ALICE.to_vec()).expect("Alice client");
+        let bob = MlsClient::new(BOB.to_vec()).expect("Bob client");
+        alice.create_group(b"ephemon-test-group").expect("group");
+        let key_package = bob.create_key_package().expect("Bob key package");
 
-        let refused = alice.process_incoming_commit(&commit, &[0]);
-        assert!(refused.is_err(), "an unauthorized commit must not merge");
-        assert_eq!(
-            alice.epoch(),
-            Some(1),
-            "a refused commit must not advance the epoch"
-        );
+        let add = alice.stage_add_member(&key_package).expect("stage add");
+
+        assert_eq!(add.claimed_identity, BOB.to_vec());
     }
 
     #[test]
-    fn merges_a_commit_from_an_authorized_member_and_moves_the_epoch_head() {
+    fn reports_the_sender_of_a_commit_and_moves_the_epoch_head() {
         let (mut alice, mut bob, _) = joined_pair();
         let before = alice.epoch_authenticator().expect("Alice head before");
         let commit = bob.create_self_update().expect("Bob self update");
         bob.merge_pending_commit()
             .expect("Bob merges its own commit");
 
-        let outcome = alice
-            .process_incoming_commit(&commit, &[0, 1])
-            .expect("authorized commit merges");
-        assert_eq!(outcome.sender_member_number, 1);
-        assert_eq!(outcome.epoch, 2);
-        assert!(outcome.added.is_empty());
-        assert!(outcome.removed.is_empty());
-        assert_eq!(alice.epoch(), Some(2));
-        assert_eq!(bob.epoch(), Some(2));
+        let facts = alice
+            .process_incoming_commit(&commit)
+            .expect("process commit");
 
-        let after = alice.epoch_authenticator().expect("Alice head after");
-        assert_ne!(before, after, "a merged commit must move the epoch head");
-        assert_eq!(
-            after,
-            bob.epoch_authenticator().expect("Bob head after"),
-            "both members must agree on the epoch head"
+        assert_eq!(facts.sender_identity, BOB.to_vec());
+        assert!(facts.sender_is_member);
+        assert!(facts.added.is_empty());
+        assert!(facts.removed_leaves.is_empty());
+        assert_eq!(facts.epoch, 2);
+        assert_ne!(
+            before,
+            alice.epoch_authenticator().expect("Alice head after"),
+            "a merged commit must move the epoch head"
         );
-
-        let encrypted = bob
-            .create_application_message(b"after the epoch change")
-            .expect("Bob MLS message");
-        let processed = alice
-            .process_application_message(&encrypted)
-            .expect("Alice processes the new epoch message");
-        assert_eq!(processed.sender_member_number, 1);
-        assert_eq!(processed.payload, b"after the epoch change");
     }
 
     #[test]
-    fn exchanges_authenticated_application_messages_between_two_members() {
-        let (mut alice, mut bob, add) = joined_pair();
+    fn reports_the_roster_as_identities() {
+        let (alice, bob, _) = joined_pair();
 
-        assert!(!add.commit.is_empty());
-        assert!(!add.welcome.is_empty());
         assert_eq!(
-            deserialize_mls_message("test commit", &add.commit)
-                .expect("deserialize commit")
-                .wire_format(),
-            WireFormat::PrivateMessage
+            alice.member_identities().expect("Alice roster"),
+            vec![ALICE.to_vec(), BOB.to_vec()]
         );
-        assert_eq!(alice.epoch(), Some(1));
-        assert_eq!(bob.epoch(), Some(1));
-        assert_eq!(alice.member_numbers().expect("Alice roster"), vec![0, 1]);
-        assert_eq!(bob.member_numbers().expect("Bob roster"), vec![0, 1]);
-
-        let encrypted = alice
-            .create_application_message(b"hello from member zero")
-            .expect("Alice MLS message");
         assert_eq!(
-            deserialize_mls_message("test application message", &encrypted)
-                .expect("deserialize application message")
-                .wire_format(),
-            WireFormat::PrivateMessage
+            bob.member_identities().expect("Bob roster"),
+            vec![ALICE.to_vec(), BOB.to_vec()]
         );
-        assert!(
-            !encrypted
-                .windows(b"hello from member zero".len())
-                .any(|window| window == b"hello from member zero")
-        );
-        assert!(
-            !encrypted
-                .windows(alice.signer.public().len())
-                .any(|window| window == alice.signer.public())
-        );
-        let processed = bob
-            .process_application_message(&encrypted)
-            .expect("Bob processes Alice message");
-        assert_eq!(processed.sender_member_number, 0);
-        assert_eq!(processed.payload, b"hello from member zero");
-
-        let reply = bob
-            .create_application_message(b"hello from member one")
-            .expect("Bob MLS message");
-        let processed = alice
-            .process_application_message(&reply)
-            .expect("Alice processes Bob message");
-        assert_eq!(processed.sender_member_number, 1);
-        assert_eq!(processed.payload, b"hello from member one");
     }
 
     #[test]
-    fn restores_both_clients_and_continues_the_same_group() {
+    fn a_signature_verifies_for_the_author_and_for_nobody_else() {
+        let (alice, bob, _) = joined_pair();
+        let keys = alice.member_signature_keys().expect("roster keys");
+        let identities = alice.member_identities().expect("roster identities");
+        let alice_key = &keys[identities
+            .iter()
+            .position(|id| id == &ALICE.to_vec())
+            .expect("Alice")];
+        let bob_key = &keys[identities
+            .iter()
+            .position(|id| id == &BOB.to_vec())
+            .expect("Bob")];
+
+        let signature = alice.sign(b"an authored event").expect("signature");
+
+        assert!(bob.verify(alice_key, b"an authored event", &signature));
+        assert!(!bob.verify(bob_key, b"an authored event", &signature));
+        assert!(!bob.verify(alice_key, b"a different event", &signature));
+    }
+
+    #[test]
+    fn a_signature_does_not_verify_without_the_label() {
+        let (alice, bob, _) = joined_pair();
+        let keys = alice.member_signature_keys().expect("roster keys");
+        let identities = alice.member_identities().expect("roster identities");
+        let alice_key = &keys[identities
+            .iter()
+            .position(|id| id == &ALICE.to_vec())
+            .expect("Alice")];
+
+        let signature = alice.sign(b"an authored event").expect("signature");
+
+        assert!(
+            !bob.provider
+                .crypto()
+                .verify_signature(
+                    CIPHERSUITE.signature_algorithm(),
+                    b"an authored event",
+                    alice_key,
+                    &signature,
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_rekey_keeps_the_signature_key_that_authored_events_are_verified_against() {
         let (mut alice, mut bob, _) = joined_pair();
-        let before_restart = alice
-            .create_application_message(b"before restart")
-            .expect("pre-restart message");
-        bob.process_application_message(&before_restart)
-            .expect("pre-restart process");
+        let identities = alice.member_identities().expect("identities");
+        let alice_index = identities
+            .iter()
+            .position(|id| id == &ALICE.to_vec())
+            .expect("Alice");
+        let before = bob.member_signature_keys().expect("keys before")[alice_index].clone();
+        let signature = alice.sign(b"authored before the rekey").expect("signature");
+        assert!(bob.verify(&before, b"authored before the rekey", &signature));
 
-        let alice_checkpoint = alice.export_checkpoint().expect("Alice checkpoint");
-        let bob_checkpoint = bob.export_checkpoint().expect("Bob checkpoint");
-        let mut alice = MlsClient::import_checkpoint(&alice_checkpoint).expect("restore Alice");
-        let mut bob = MlsClient::import_checkpoint(&bob_checkpoint).expect("restore Bob");
+        let commit = alice.create_self_update().expect("self update");
+        alice.merge_pending_commit().expect("merge");
+        bob.process_incoming_commit(&commit).expect("process");
+        bob.merge_pending_commit().expect("merge on Bob");
 
-        assert_eq!(alice.epoch(), Some(1));
-        assert_eq!(bob.epoch(), Some(1));
-        let after_restart = bob
-            .create_application_message(b"after restart")
-            .expect("post-restart message");
-        let processed = alice
-            .process_application_message(&after_restart)
-            .expect("post-restart process");
-        assert_eq!(processed.sender_member_number, 1);
-        assert_eq!(processed.payload, b"after restart");
+        let after = bob.member_signature_keys().expect("keys after")[alice_index].clone();
+        assert_eq!(
+            before, after,
+            "a rekey must not orphan signatures made under the previous key"
+        );
     }
 
     #[test]
-    fn rejects_truncated_and_trailing_checkpoint_data() {
-        let (alice, _, _) = joined_pair();
-        let checkpoint = alice.export_checkpoint().expect("checkpoint");
-        assert!(MlsClient::import_checkpoint(&checkpoint[..checkpoint.len() - 1]).is_err());
+    fn reports_the_sender_of_an_application_message() {
+        let (mut alice, mut bob, _) = joined_pair();
+        let message = bob
+            .create_application_message(b"from bob")
+            .expect("Bob message");
 
-        let mut trailing = checkpoint;
-        trailing.push(0);
-        assert!(MlsClient::import_checkpoint(&trailing).is_err());
+        let processed = alice
+            .process_application_message(&message)
+            .expect("Alice reads it");
+
+        assert_eq!(processed.sender_identity, BOB.to_vec());
+        assert!(processed.sender_is_member);
+        assert_eq!(processed.payload, b"from bob".to_vec());
+    }
+
+    #[test]
+    fn restores_a_group_from_the_parts_it_hands_out() {
+        let (alice, _, _) = joined_pair();
+        let snapshot = alice.storage_snapshot().expect("snapshot");
+        let count = u32::from_be_bytes(snapshot[0..4].try_into().unwrap()) as usize;
+        let key_bytes = u32::from_be_bytes(snapshot[4..8].try_into().unwrap()) as usize;
+        let read_lengths = |offset: usize| -> Vec<u32> {
+            (0..count)
+                .map(|index| {
+                    let at = offset + index * 4;
+                    u32::from_be_bytes(snapshot[at..at + 4].try_into().unwrap())
+                })
+                .collect()
+        };
+        let key_lengths = read_lengths(8);
+        let blob_lengths = read_lengths(8 + count * 4);
+        let blobs_at = 8 + count * 8;
+        let keys = snapshot[blobs_at..blobs_at + key_bytes].to_vec();
+        let blobs = snapshot[blobs_at + key_bytes..].to_vec();
+        let signing_public_key = alice.signing_public_key();
+        let group_id = alice.group_id().expect("group id");
+
+        let restored = MlsClient::restore(
+            ALICE.to_vec(),
+            &signing_public_key,
+            &group_id,
+            &keys,
+            &key_lengths,
+            &blobs,
+            &blob_lengths,
+        )
+        .expect("restore");
+
+        assert_eq!(restored.identity(), ALICE.to_vec());
+        assert_eq!(restored.epoch(), alice.epoch());
+        assert_eq!(
+            restored.member_identities().expect("roster"),
+            alice.member_identities().expect("roster")
+        );
+    }
+
+    #[test]
+    fn refuses_entries_that_repeat_a_storage_key() {
+        let keys = b"same-keysame-key";
+        let blobs = b"valuevalue";
+
+        assert!(
+            MlsClient::restore(ALICE.to_vec(), b"key", b"", keys, &[8, 8], blobs, &[5, 5]).is_err()
+        );
+    }
+
+    #[test]
+    fn refuses_halves_that_disagree() {
+        assert!(
+            MlsClient::restore(ALICE.to_vec(), b"key", b"", b"key", &[3], b"value", &[5, 1])
+                .is_err()
+        );
+        assert!(
+            MlsClient::restore(ALICE.to_vec(), b"key", b"", b"key", &[9], b"value", &[5]).is_err()
+        );
     }
 }

@@ -1,6 +1,6 @@
 import { ChatEventRecord } from '../types/chatRecord';
 import { MemberNumber, toMemberNumber } from '../types/conversation';
-import { MLS_EVENT_HASH_BYTES, isMlsEventId, mlsEventHash } from '../types/eventId';
+import { isMlsEventId } from '../types/eventId';
 import { Reader, Writer } from './byteCodec';
 import { CommitHead, decodeCommitHead, encodeCommitHead } from './commitLog';
 
@@ -9,7 +9,7 @@ export type ChatFrontierRange = { from: number; to: number };
 export type ChatAuthorFrontier = {
     author: MemberNumber;
     contiguous: number;
-    head?: Uint8Array;
+    highest: number;
     holes: ReadonlyArray<ChatFrontierRange>;
 };
 
@@ -30,64 +30,64 @@ export function computeChatFrontier(
     cleared: ChatClearedFrontier = [],
     roster: ReadonlyArray<MemberNumber> = [],
 ): ChatFrontier {
-    const bySequence = new Map<MemberNumber, Map<number, Uint8Array>>();
+    const bySequence = new Map<MemberNumber, Set<number>>();
     for (const author of roster) {
-        if (!bySequence.has(author)) bySequence.set(author, new Map());
+        if (!bySequence.has(author)) bySequence.set(author, new Set());
     }
     for (const entry of cleared) {
-        if (!bySequence.has(entry.author)) bySequence.set(entry.author, new Map());
+        if (!bySequence.has(entry.author)) bySequence.set(entry.author, new Set());
     }
     for (const record of records) {
         if (record.author === undefined || record.sequence === undefined || !isMlsEventId(record.id)) continue;
         let sequences = bySequence.get(record.author);
         if (sequences === undefined) {
-            sequences = new Map();
+            sequences = new Set();
             bySequence.set(record.author, sequences);
         }
-        sequences.set(record.sequence, mlsEventHash(record.id));
+        sequences.add(record.sequence);
     }
 
     const frontier: Array<ChatAuthorFrontier> = [];
     for (const [author, sequences] of [...bySequence].sort((left, right) => left[0] - right[0])) {
         const clearedThrough = cleared.find((entry) => entry.author === author)?.through ?? -1;
-        const present = [...sequences.keys()].sort((left, right) => left - right);
+        const present = [...sequences].sort((left, right) => left - right);
         const highest = Math.max(clearedThrough, present.length === 0 ? -1 : present[present.length - 1]);
         let contiguous = clearedThrough;
         while (sequences.has(contiguous + 1)) contiguous += 1;
 
         const holes: Array<ChatFrontierRange> = [];
-        let cursor = contiguous + 1;
-        while (cursor <= highest && holes.length < MAX_RANGES) {
-            if (sequences.has(cursor)) {
-                cursor += 1;
-                continue;
+        let previous = contiguous;
+        let truncated = false;
+        for (const sequence of present) {
+            if (sequence <= contiguous) continue;
+            if (sequence > previous + 1) {
+                if (holes.length >= MAX_RANGES) {
+                    truncated = true;
+                    break;
+                }
+                holes.push({ from: previous + 1, to: sequence - 1 });
             }
-            const from = cursor;
-            while (cursor <= highest && !sequences.has(cursor)) cursor += 1;
-            holes.push({ from, to: cursor - 1 });
+            previous = sequence;
         }
 
-        frontier.push({
-            author,
-            contiguous,
-            head: sequences.get(contiguous),
-            holes,
-        });
+        frontier.push({ author, contiguous, highest: truncated ? previous : highest, holes });
     }
     return frontier;
 }
 
+/**
+ * Advertises where this member is authoring from when it holds none of its own events. A member that holds some of them
+ * is left alone: a gap below its chain head is a lost event, and hiding it stops peers from ever pushing it back.
+ */
 export function clampOwnAuthorFrontier(
     frontier: ChatFrontier,
     own: MemberNumber,
     authoredSequences: number,
 ): ChatFrontier {
     if (authoredSequences <= 0) return frontier;
-    const highest = authoredSequences - 1;
+    const authored = authoredSequences - 1;
     return frontier.map((entry) =>
-        entry.author === own && entry.contiguous < highest && entry.holes.length === 0
-            ? { ...entry, contiguous: highest, head: undefined }
-            : entry,
+        entry.author === own && entry.highest < 0 ? { ...entry, contiguous: authored, highest: authored } : entry,
     );
 }
 
@@ -98,16 +98,17 @@ export function missingForPeer(
     const wanted: Array<ChatFrontierRange & { author: MemberNumber }> = [];
     for (const mine of own) {
         const theirs = peer.find((entry) => entry.author === mine.author);
-        const highest = mine.holes.length === 0 ? mine.contiguous : Math.max(mine.contiguous, lastHoleEnd(mine));
+        const highest = mine.highest;
         if (theirs === undefined) {
             if (highest >= 0) wanted.push({ author: mine.author, from: 0, to: highest });
             continue;
         }
         for (const hole of theirs.holes) {
-            wanted.push({ author: mine.author, from: hole.from, to: hole.to });
+            if (hole.from > highest) continue;
+            wanted.push({ author: mine.author, from: hole.from, to: Math.min(hole.to, highest) });
         }
         if (highest > theirs.contiguous) {
-            const from = theirs.holes.length === 0 ? theirs.contiguous + 1 : lastHoleEnd(theirs) + 1;
+            const from = Math.max(theirs.contiguous, lastHoleEnd(theirs), theirs.highest) + 1;
             if (from <= highest) wanted.push({ author: mine.author, from, to: highest });
         }
     }
@@ -142,8 +143,7 @@ export function encodeChatFrontier(frontier: ChatFrontier): Uint8Array {
     for (const entry of frontier) {
         writer.u32(entry.author);
         writer.u64(BigInt(entry.contiguous + 1));
-        writer.u8(entry.head === undefined ? 0 : 1);
-        if (entry.head !== undefined) writer.fixed(entry.head, MLS_EVENT_HASH_BYTES, 'Frontier head');
+        writer.u64(BigInt(entry.highest + 1));
         if (entry.holes.length > MAX_RANGES) throw new Error(`A ${FRONTIER_LABEL} carries too many holes`);
         writer.u32(entry.holes.length);
         for (const hole of entry.holes) {
@@ -161,9 +161,8 @@ export function decodeChatFrontier(bytes: Uint8Array): ChatFrontier {
     for (let index = 0; index < entries; index += 1) {
         const author = toMemberNumber(reader.u32());
         const contiguous = safeSequence(reader.u64()) - 1;
-        const presence = reader.u8();
-        if (presence !== 0 && presence !== 1) throw new Error(`Unknown head presence in a ${FRONTIER_LABEL}`);
-        const head = presence === 1 ? reader.fixed(MLS_EVENT_HASH_BYTES) : undefined;
+        const highest = safeSequence(reader.u64()) - 1;
+        if (highest < contiguous) throw new Error(`A ${FRONTIER_LABEL} claims a highest below its contiguous run`);
         const holeCount = reader.u32();
         if (holeCount > MAX_RANGES) throw new Error(`A ${FRONTIER_LABEL} carries too many holes`);
         const holes: Array<ChatFrontierRange> = [];
@@ -172,10 +171,11 @@ export function decodeChatFrontier(bytes: Uint8Array): ChatFrontier {
             const from = safeSequence(reader.u64());
             const to = safeSequence(reader.u64());
             if (from <= lowest || to < from) throw new Error(`A ${FRONTIER_LABEL} carries an unordered hole`);
+            if (to > highest) throw new Error(`A ${FRONTIER_LABEL} carries a hole above the head it claims`);
             lowest = to;
             holes.push({ from, to });
         }
-        frontier.push({ author, contiguous, head, holes });
+        frontier.push({ author, contiguous, highest, holes });
     }
     reader.finish();
     return frontier;

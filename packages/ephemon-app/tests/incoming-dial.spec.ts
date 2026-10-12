@@ -11,8 +11,6 @@ test('a dial that arrives while the tab is in the background asks for attention,
         await bob.unlock('dial-bob-pass');
         await alice.unlock('dial-alice-pass');
 
-        // A background tab keeps reporting itself visible and focused under the test runner, so the state the app
-        // reads is set directly.
         await bob.page.evaluate(() => {
             Object.defineProperty(document, 'hasFocus', { value: () => false, configurable: true });
         });

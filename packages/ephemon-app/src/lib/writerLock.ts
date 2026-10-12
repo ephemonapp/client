@@ -1,7 +1,5 @@
 const LOCK_NAME = 'ephemon-mls-writer';
 
-export type WriterLockState = 'pending' | 'writer' | 'unsupported';
-
 type LockManager = {
     request(name: string, options: { mode: 'exclusive' }, callback: () => Promise<void>): Promise<void>;
 };

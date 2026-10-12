@@ -4,7 +4,7 @@
     "description": "Ephemon Messenger App - Beta 0.0.1",
     "main": "dist/index.js",
     "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1",
+        "test": "tsc --noEmit -p tsconfig.spec.json && vitest run && TZ=Asia/Tbilisi vitest run && TZ=America/Los_Angeles vitest run",
         "audit:renders": "playwright test",
         "prerender": "webpack --config webpack.prerender.config.js",
         "start": "npm run prerender -- --env environment=local && webpack serve --env environment=local",
@@ -28,9 +28,11 @@
         "copy-webpack-plugin": "^14.0.0",
         "css-loader": "^7.1.4",
         "html-webpack-plugin": "^5.6.8",
+        "jsdom": "^30.0.1",
         "style-loader": "^4.0.0",
         "ts-loader": "^9.6.2",
         "typescript": "^6.0.3",
+        "vitest": "^4.1.9",
         "webpack": "^5.109.2",
         "webpack-cli": "^7.2.2"
     }

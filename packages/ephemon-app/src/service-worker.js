@@ -95,7 +95,7 @@ self.addEventListener('install', (event) => {
     event.waitUntil(
         (async () => {
             if (!replacing) return;
-            for (const client of await self.clients.matchAll({ type: 'window' })) {
+            for (const client of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) {
                 client.postMessage({ type: 'NEW_VERSION_AVAILABLE' });
             }
         })(),

@@ -279,6 +279,16 @@
     white-space: nowrap;
 }
 
+.bubble__author-member {
+    display: inline-block;
+    margin-left: 5px;
+    padding: 0 4px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--pri) 14%, transparent);
+    font-weight: 600;
+    opacity: 0.75;
+}
+
 .bubble__text {
     display: block;
     white-space: pre-wrap;

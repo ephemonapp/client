@@ -191,6 +191,8 @@ const Scene: React.FC = () => {
                 onClear={noop}
                 onDelete={noop}
                 group={false}
+                canAddMember={false}
+                readOnly={false}
                 onMemberName={noop}
             />
             <MessageList

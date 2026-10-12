@@ -484,18 +484,17 @@ export function getConnectionSaga(
         dataChannel.onmessage = (event) => {
             let dataBytes: Uint8Array;
             if (event.data instanceof ArrayBuffer) {
-                dataBytes = new Uint8Array(event.data.slice(0));
+                dataBytes = new Uint8Array(event.data);
             } else if (ArrayBuffer.isView(event.data)) {
                 const view = event.data;
-                dataBytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice();
+                dataBytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
             } else {
                 logger.warn(
                     `[connection-saga] Wrong message type received via ${suffix} dataChannel with label '${dataChannel.label}' in ${type} connection with ${publicKey}.`,
                 );
                 return;
             }
-            const decryptedBytes = cryptography.decrypt(dataBytes, getSharedSymmetricKey());
-            const message = decryptedBytes.slice();
+            const message = cryptography.decrypt(dataBytes, getSharedSymmetricKey());
             new Promise<void>((resolve) => {
                 saga.onMessage?.call(saga, message);
                 resolve();
@@ -789,10 +788,10 @@ export function getConnectionSaga(
         send(message: Uint8Array): void {
             try {
                 if (!(message instanceof Uint8Array)) throw new TypeError('Connection data must be a Uint8Array.');
-                const dataEncrypted = cryptography.encrypt(message.slice(), getSharedSymmetricKey());
-                getRtcSendDataChannel().send(dataEncrypted.slice());
+                const dataEncrypted = cryptography.encrypt(message, getSharedSymmetricKey());
+                getRtcSendDataChannel().send(dataEncrypted as Uint8Array<ArrayBuffer>);
             } catch (error) {
-                logger.error(`[connection-saga] Error sending data in ${type} connection with ${publicKey}.`);
+                logger.error(`[connection-saga] Error sending data in ${type} connection with ${publicKey}.`, error);
             }
         },
     };

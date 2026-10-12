@@ -22,6 +22,8 @@ test('a member that missed several epochs is caught up when it comes back', asyn
         await peer2.waitForConnected();
 
         await master.createGroupFromSidebar([peer1.publicKey, peer2.publicKey], 'Master');
+        await peer1.acceptGroupInvite();
+        await peer2.acceptGroupInvite();
         for (const app of everyone) await expect(app.groupRow).toHaveCount(1);
         await peer1.selectGroup();
         await peer1.nameSelfInGroup('Peer One');
@@ -35,26 +37,24 @@ test('a member that missed several epochs is caught up when it comes back', asyn
         await expect(peer2.peerBubble(opening)).toHaveCount(1);
 
         await peer2.leaveApp();
-        for (const round of [1, 2]) {
-            await master.page.reload({ waitUntil: 'domcontentloaded' });
-            await master.page.waitForSelector('.lock__card');
-            await master.unlock(PASSWORDS.master);
+        for (let restart = 0; restart < 2; restart += 1) {
+            await master.restart(PASSWORDS.master);
             await master.selectGroup();
-            expect(round).toBeGreaterThan(0);
+
+            await peer1.restart(PASSWORDS.peer1);
+            await peer1.selectGroup();
+            if (await peer1.retryBanner.isVisible()) {
+                await peer1.retryFromBanner();
+            } else {
+                await peer1.reconnectFromKebab();
+            }
+            await peer1.waitForConnected();
         }
 
-        await peer1.page.reload({ waitUntil: 'domcontentloaded' });
-        await peer1.page.waitForSelector('.lock__card');
-        await peer1.unlock(PASSWORDS.peer1);
-        await peer1.selectGroup();
+        await expect.poll(() => master.commitConversations().then((rows) => rows.length)).toBeGreaterThanOrEqual(2);
+
         const said = `peer one while peer two was away ${Date.now()}`;
         await peer1.sendMessage(said);
-        if (await peer1.retryBanner.isVisible()) {
-            await peer1.retryFromBanner();
-        } else {
-            await peer1.reconnectFromKebab();
-        }
-        await peer1.waitForConnected();
         await master.scrollMessagesToBottom();
         await expect(master.peerBubble(said)).toHaveCount(1);
 

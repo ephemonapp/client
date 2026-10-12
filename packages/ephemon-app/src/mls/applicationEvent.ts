@@ -1,6 +1,6 @@
 import { MemberNumber, toMemberNumber } from '../types/conversation';
 import { MLS_EVENT_HASH_BYTES } from '../types/eventId';
-import { Reader, Writer } from './byteCodec';
+import { Reader, sameBytes, Writer } from './byteCodec';
 import { HybridLogicalTime } from './hybridLogicalClock';
 
 export const APPLICATION_EVENT_VERSION = 1;
@@ -15,9 +15,17 @@ const EVENT_KINDS = {
     'typing': 5,
     'sync.inventory': 6,
     'member.profile': 7,
+    'history.batch': 8,
 } as const;
 
-const EPHEMERAL_KINDS: ReadonlyArray<keyof typeof EVENT_KINDS> = ['typing', 'sync.inventory', 'member.profile'];
+const EPHEMERAL_KINDS: ReadonlyArray<keyof typeof EVENT_KINDS> = [
+    'typing',
+    'sync.inventory',
+    'member.profile',
+    'history.batch',
+];
+
+const MAX_BATCHED_EVENTS = 4096;
 
 const REPLY_ABSENT = 0;
 const REPLY_PRESENT = 1;
@@ -37,7 +45,9 @@ export type DurableApplicationEventBody =
 export type EphemeralApplicationEventBody =
     | { kind: 'typing' }
     | { kind: 'sync.inventory'; frontier: Uint8Array; reply: boolean }
-    | { kind: 'member.profile'; name: string; locator: string; serverUrl?: string };
+    | { kind: 'member.profile'; name: string; locator: string; serverUrl?: string }
+    /** Stored events a peer is missing, each still in its author's signed envelope. */
+    | { kind: 'history.batch'; frames: ReadonlyArray<Uint8Array> };
 
 export type ApplicationEventBody = DurableApplicationEventBody | EphemeralApplicationEventBody;
 
@@ -50,6 +60,8 @@ export type DurableApplicationEvent = {
     time: HybridLogicalTime;
     author: MemberNumber;
     chain: ApplicationEventChain;
+    /** The group epoch the author wrote it in; a member that joined later is not served it. */
+    epoch: bigint;
     body: DurableApplicationEventBody;
 };
 
@@ -96,6 +108,10 @@ function encodeBody(writer: Writer, body: ApplicationEventBody): void {
             writer.u8(body.reply ? 1 : 0);
             writer.variable(body.frontier);
             break;
+        case 'history.batch':
+            writer.u32(body.frames.length);
+            for (const frame of body.frames) writer.variable(frame);
+            break;
     }
 }
 
@@ -118,6 +134,7 @@ export function encodeApplicationEvent(event: ApplicationEvent): Uint8Array {
         if (event.chain.previous !== undefined) {
             writer.fixed(event.chain.previous, MLS_EVENT_HASH_BYTES, 'Previous event hash');
         }
+        writer.u64(event.epoch);
     }
     const body = new Writer();
     encodeBody(body, event.body);
@@ -169,6 +186,13 @@ function decodeBody(reader: Reader, kind: keyof typeof EVENT_KINDS): Application
             if (reply !== 0 && reply !== 1) throw new Error(`Unknown inventory reply flag in an ${EVENT_LABEL}`);
             return { kind: 'sync.inventory', reply: reply === 1, frontier: reader.variable() };
         }
+        case 'history.batch': {
+            const count = reader.u32();
+            if (count > MAX_BATCHED_EVENTS) throw new Error(`An ${EVENT_LABEL} batch carries too many events`);
+            const frames: Array<Uint8Array> = [];
+            for (let index = 0; index < count; index += 1) frames.push(reader.variable());
+            return { kind: 'history.batch', frames };
+        }
     }
 }
 
@@ -177,10 +201,6 @@ function kindOf(value: number): keyof typeof EVENT_KINDS {
         if (encoded === value) return kind as keyof typeof EVENT_KINDS;
     }
     throw new Error(`Unknown ${EVENT_LABEL} kind ${value}`);
-}
-
-function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
-    return left.byteLength === right.byteLength && left.every((value, index) => value === right[index]);
 }
 
 export function decodeApplicationEvent(bytes: Uint8Array): ApplicationEvent {
@@ -194,6 +214,7 @@ export function decodeApplicationEvent(bytes: Uint8Array): ApplicationEvent {
 
     let chain: ApplicationEventChain | undefined;
     let author: MemberNumber | undefined;
+    let epoch: bigint | undefined;
     if (!EPHEMERAL_KINDS.includes(kind)) {
         author = toMemberNumber(reader.u32());
         const sequence = reader.u64();
@@ -209,6 +230,7 @@ export function decodeApplicationEvent(bytes: Uint8Array): ApplicationEvent {
         if (chain.previous === undefined && chain.sequence !== 0) {
             throw new Error('Only the first event of a chain may omit its predecessor');
         }
+        epoch = reader.u64();
     }
 
     const bodyReader = new Reader(reader.variable(), EVENT_LABEL);
@@ -217,13 +239,18 @@ export function decodeApplicationEvent(bytes: Uint8Array): ApplicationEvent {
     reader.finish();
 
     let event: ApplicationEvent;
-    if (body.kind === 'typing' || body.kind === 'sync.inventory' || body.kind === 'member.profile') {
+    if (
+        body.kind === 'typing' ||
+        body.kind === 'sync.inventory' ||
+        body.kind === 'member.profile' ||
+        body.kind === 'history.batch'
+    ) {
         event = { time, body };
     } else {
-        if (chain === undefined || author === undefined) {
-            throw new Error(`A durable ${EVENT_LABEL} must carry its author and its chain position`);
+        if (chain === undefined || author === undefined || epoch === undefined) {
+            throw new Error(`A durable ${EVENT_LABEL} must carry its author, its chain position and its epoch`);
         }
-        event = { time, author, chain, body };
+        event = { time, author, chain, epoch, body };
     }
     if (!sameBytes(encodeApplicationEvent(event), bytes)) {
         throw new Error(`An ${EVENT_LABEL} is not canonically encoded`);

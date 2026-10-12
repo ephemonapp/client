@@ -8,8 +8,9 @@ export function now() {
     return Date.now();
 }
 
+/** Truncated: the server-anchored value feeds `BigInt` event stamps and record ids, which reject non-integers. */
 export function serverTime() {
-    return getEphemonCore()?.serverTime ?? Date.now();
+    return Math.trunc(getEphemonCore()?.serverTime ?? Date.now());
 }
 
 export function formatTimestampDate(utcTimestamp: number) {

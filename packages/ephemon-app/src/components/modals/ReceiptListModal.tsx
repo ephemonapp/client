@@ -2,6 +2,8 @@ import { hashColor, initials } from '../../lib/identicon';
 import React from 'react';
 
 export type ReceiptListEntry = {
+    /** The row identity: a member whose locator is still unknown carries an empty public key. */
+    memberNumber: number;
     publicKey: string;
     display: string;
     state: 'read' | 'received' | 'waiting';
@@ -25,7 +27,7 @@ const ReceiptListModal: React.FC<ReceiptListModalProps> = ({ entries }) => (
         <div className='contact-picker__list'>
             {entries.map((entry) => (
                 <div
-                    key={entry.publicKey}
+                    key={entry.memberNumber}
                     className='contact-picker__row receipt-list__row'
                     data-state={entry.state}
                 >

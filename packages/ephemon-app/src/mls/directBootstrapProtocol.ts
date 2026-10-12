@@ -20,7 +20,6 @@ export type MlsRosterMember = {
 export type DirectMlsMembership = {
     role: 'creator' | 'invitee';
     ownMemberNumber: MemberNumber;
-    peerMemberNumber: MemberNumber;
     owner: MemberNumber;
     roster: ReadonlyArray<MlsRosterMember>;
 };
@@ -59,8 +58,22 @@ export type DirectMlsCommitFrame = {
     commit: Uint8Array;
 };
 
+/**
+ * Sent outside MLS by a member that received traffic from an epoch it has not reached: its own MLS messages are
+ * encrypted under an epoch the group no longer holds keys for, so this is the only request the group can read.
+ */
+export type DirectMlsCommitsWantedFrame = {
+    kind: 'commitsWanted';
+    routingId: Uint8Array;
+    epoch: bigint;
+};
+
 export type DirectMlsWireFrame =
-    DirectMlsBootstrapFrame | DirectMlsApplicationFrame | DirectMlsCommitFrame | DirectMlsRelayFrame;
+    | DirectMlsBootstrapFrame
+    | DirectMlsApplicationFrame
+    | DirectMlsCommitFrame
+    | DirectMlsRelayFrame
+    | DirectMlsCommitsWantedFrame;
 
 const FRAME_KINDS = {
     hello: 1,
@@ -73,6 +86,7 @@ const FRAME_KINDS = {
     commit: 8,
     invite: 9,
     relay: 10,
+    commitsWanted: 11,
 } as const;
 
 const encoder = new TextEncoder();
@@ -85,6 +99,7 @@ function writeRoster(writer: Writer, roster: ReadonlyArray<MlsRosterMember>): vo
         writer.variable(encoder.encode(member.publicKey));
         writer.variable(encoder.encode(member.serverUrl ?? ''));
         writer.variable(encoder.encode(member.joinedEpoch ?? ''));
+        writer.variable(encoder.encode(member.name ?? ''));
     }
 }
 
@@ -96,11 +111,13 @@ function readRoster(reader: Reader): Array<MlsRosterMember> {
         const publicKey = decoder.decode(reader.variable());
         const serverUrl = decoder.decode(reader.variable());
         const joinedEpoch = decoder.decode(reader.variable());
+        const name = decoder.decode(reader.variable());
         roster.push({
             memberNumber,
             publicKey,
             serverUrl: serverUrl.length === 0 ? undefined : serverUrl,
             joinedEpoch: joinedEpoch.length === 0 ? undefined : joinedEpoch,
+            name: name.length === 0 ? undefined : name,
         });
     }
     return roster;
@@ -130,11 +147,10 @@ export function assignDirectMlsMembership(
     return {
         role: creator ? 'creator' : 'invitee',
         ownMemberNumber,
-        peerMemberNumber,
         owner: toMemberNumber(0),
         roster: [
-            { memberNumber: ownMemberNumber, publicKey: ownPublicKey },
-            { memberNumber: peerMemberNumber, publicKey: peerPublicKey, serverUrl: peerServerUrl },
+            { memberNumber: ownMemberNumber, publicKey: ownPublicKey, joinedEpoch: '0' },
+            { memberNumber: peerMemberNumber, publicKey: peerPublicKey, serverUrl: peerServerUrl, joinedEpoch: '0' },
         ].sort((left, right) => left.memberNumber - right.memberNumber),
     };
 }
@@ -176,6 +192,10 @@ function encodePayload(frame: DirectMlsWireFrame): Uint8Array {
             writer.fixed(frame.routingId, ROUTING_ID_BYTES, 'Routing ID');
             writer.u8(frame.hops);
             writer.variable(frame.message);
+            break;
+        case 'commitsWanted':
+            writer.fixed(frame.routingId, ROUTING_ID_BYTES, 'Routing ID');
+            writer.u64(frame.epoch);
             break;
         case 'invite':
             writer.fixed(frame.routingId, ROUTING_ID_BYTES, 'Routing ID');
@@ -254,6 +274,9 @@ export function tryDecodeDirectMlsWireFrame(bytes: Uint8Array): DirectMlsWireFra
         case FRAME_KINDS.relay:
             frame = { kind: 'relay', routingId: routingId(), hops: reader.u8(), message: reader.variable() };
             break;
+        case FRAME_KINDS.commitsWanted:
+            frame = { kind: 'commitsWanted', routingId: routingId(), epoch: reader.u64() };
+            break;
         case FRAME_KINDS.invite:
             frame = {
                 kind: 'invite',
@@ -272,6 +295,13 @@ export function tryDecodeDirectMlsWireFrame(bytes: Uint8Array): DirectMlsWireFra
 
 export function tryDecodeDirectMlsBootstrapFrame(bytes: Uint8Array): DirectMlsBootstrapFrame | undefined {
     const frame = tryDecodeDirectMlsWireFrame(bytes);
-    if (frame?.kind === 'application' || frame?.kind === 'commit' || frame?.kind === 'relay') return undefined;
+    if (
+        frame?.kind === 'application' ||
+        frame?.kind === 'commit' ||
+        frame?.kind === 'relay' ||
+        frame?.kind === 'commitsWanted'
+    ) {
+        return undefined;
+    }
     return frame;
 }

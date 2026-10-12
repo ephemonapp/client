@@ -16,6 +16,7 @@ test('a member that has not introduced itself gets the form instead of the conve
         await peer.waitForConnected();
 
         await master.createGroupFromSidebar([peer.publicKey], 'Master');
+        await peer.acceptGroupInvite();
         for (const app of [master, peer]) await expect(app.groupRow).toHaveCount(1);
 
         await peer.selectGroup();
@@ -27,15 +28,14 @@ test('a member that has not introduced itself gets the form instead of the conve
         await master.sendMessage(said);
 
         const receipt = master.ownBubble(said).locator('.bubble__receipt');
-        await expect(receipt).toHaveAttribute('title', /Delivered/);
         await expect(peer.bubbles).toHaveCount(0);
-        await expect(receipt).not.toHaveAttribute('title', /Seen/);
 
         await peer.selectConversation(master.publicKey);
         await expect(peer.composer).toBeVisible();
         await peer.selectGroup();
         await expect(peer.introduceForm).toBeVisible();
         await expect(peer.bubbles).toHaveCount(0);
+        await expect(receipt).toHaveAttribute('title', 'Undelivered');
 
         await peer.nameSelfInGroup('Peer');
         await expect(peer.introduceForm).toHaveCount(0);

@@ -1,13 +1,12 @@
+import { compareHybridLogicalTime, HybridLogicalTime } from '../mls/hybridLogicalClock';
 import { ChatWindowMessageType, MemberReaction, MemberReceipt } from '../types/chatMessageType';
 import { ChatEventRecord, ChatReceiptRecord, isChatMessageRecord } from '../types/chatRecord';
 import { ConversationId, MemberNumber } from '../types/conversation';
 import { EventId, toDateSeparatorId } from '../types/eventId';
 import { ReplyToMessageType } from '../types/replyToMessageType';
-import { now, serverTime } from '../utils/functions';
+import { serverTime } from '../utils/functions';
 import { fmtDay } from './time';
 import { useSyncExternalStore } from 'react';
-
-export type MessageSender = 'you' | 'peer';
 
 export type MessageKey = EventId;
 
@@ -15,7 +14,6 @@ export type ReplyTarget = ReplyToMessageType & { scrollToReply: () => void };
 
 export type ChatMutation =
     | { kind: 'upsert'; key: MessageKey }
-    | { kind: 'delete'; key: MessageKey }
     | { kind: 'clearAll'; records: ReadonlyArray<ChatEventRecord> }
     | { kind: 'reset' };
 
@@ -40,14 +38,8 @@ function compareMessages(a: ChatWindowMessageType, b: ChatWindowMessageType): nu
     return a.id < b.id ? -1 : 1;
 }
 
-function earliest(
-    a: { timestamp: number } | undefined,
-    b: { timestamp: number } | undefined,
-): { timestamp: number } | undefined {
-    if (a === undefined) return b;
-    if (b === undefined) return a;
-    return a.timestamp <= b.timestamp ? a : b;
-}
+/** Receipts whose target never arrives are held for reordering, not forever. */
+const MAX_ORPHAN_TARGETS = 256;
 
 const NO_MEMBER = -1 as MemberNumber;
 
@@ -75,9 +67,14 @@ function withReaction(
             byAuthor.set(Number(member), { value: reaction.value, timestamp: reaction.timestamp });
         }
     }
-    const own = byAuthor.get(Number(author));
-    if (value.length === 0 || own?.value === value) byAuthor.delete(Number(author));
-    else byAuthor.set(Number(author), { value, timestamp });
+    /**
+     * Catch-up and relay deliver events out of order, so an older pick must not undo a member's newer one. A cleared
+     * reaction is kept as an empty entry rather than dropped: it is the only record that the clearing happened, and
+     * without it a replayed older pick brings the reaction back.
+     */
+    const held = byAuthor.get(Number(author));
+    if (held !== undefined && held.timestamp > timestamp) return existing ?? [];
+    byAuthor.set(Number(author), { value, timestamp });
     const grouped = new Map<string, { authors: Array<MemberNumber>; timestamp: number }>();
     for (const [member, reaction] of byAuthor) {
         const entry = grouped.get(reaction.value) ?? { authors: [], timestamp: reaction.timestamp };
@@ -95,7 +92,10 @@ function withReaction(
 }
 
 function newest(reactions: ReadonlyArray<MemberReaction>): { timestamp: number; value: string } | undefined {
-    const last = [...reactions].sort((left, right) => left.timestamp - right.timestamp).pop();
+    const last = reactions
+        .filter((reaction) => reaction.value.length > 0)
+        .sort((left, right) => left.timestamp - right.timestamp)
+        .pop();
     return last === undefined ? undefined : { timestamp: last.timestamp, value: last.value };
 }
 
@@ -125,52 +125,6 @@ function applyReceipt(message: ChatWindowMessageType, receipt: ChatReceiptRecord
     }
 }
 
-function mergeReceipts(
-    live: ReadonlyArray<MemberReceipt> | undefined,
-    stored: ReadonlyArray<MemberReceipt> | undefined,
-): ReadonlyArray<MemberReceipt> | undefined {
-    if (live === undefined) return stored;
-    if (stored === undefined) return live;
-    let merged: ReadonlyArray<MemberReceipt> = live;
-    for (const entry of stored) merged = withReceipt(merged, entry.author, entry.timestamp);
-    return merged;
-}
-
-function mergeReactions(
-    live: ReadonlyArray<MemberReaction> | undefined,
-    stored: ReadonlyArray<MemberReaction> | undefined,
-): ReadonlyArray<MemberReaction> | undefined {
-    if (live === undefined) return stored;
-    if (stored === undefined) return live;
-    let merged: ReadonlyArray<MemberReaction> = live;
-    for (const reaction of stored) {
-        for (const author of reaction.authors) {
-            const known = merged.some((entry) => entry.authors.some((member) => Number(member) === Number(author)));
-            if (!known) merged = withReaction(merged, author, reaction.value, reaction.timestamp);
-        }
-    }
-    return merged;
-}
-
-function mergeMessage(live: ChatWindowMessageType, stored: ChatWindowMessageType): ChatWindowMessageType {
-    const reactions = mergeReactions(live.reactions, stored.reactions);
-    const reaction =
-        live.reaction === undefined ||
-        (stored.reaction !== undefined && stored.reaction.timestamp > live.reaction.timestamp)
-            ? stored.reaction
-            : live.reaction;
-    return {
-        ...live,
-        delivered: earliest(live.delivered, stored.delivered),
-        seen: earliest(live.seen, stored.seen),
-        deliveredBy: mergeReceipts(live.deliveredBy, stored.deliveredBy),
-        seenBy: mergeReceipts(live.seenBy, stored.seenBy),
-        reactions,
-        reaction: (reactions !== undefined ? newest(reactions) : undefined) ?? reaction ?? live.reaction,
-        reply_to: live.reply_to ?? stored.reply_to,
-    };
-}
-
 function receiptKey(entries: ReadonlyArray<MemberReceipt> | undefined): string {
     return (entries ?? []).map((entry) => `${Number(entry.author)}:${entry.timestamp}`).join(',');
 }
@@ -194,6 +148,11 @@ function sameMessage(a: ChatWindowMessageType, b: ChatWindowMessageType): boolea
         a.reply_to?.sender === b.reply_to?.sender &&
         a.reply_to?.text === b.reply_to?.text
     );
+}
+
+export function hasSeen(message: ChatWindowMessageType, ownMemberNumber: number | undefined): boolean {
+    if (ownMemberNumber === undefined) return message.seen !== undefined;
+    return (message.seenBy ?? []).some((entry) => Number(entry.author) === Number(ownMemberNumber));
 }
 
 export type ChatStore = {
@@ -222,6 +181,8 @@ export type ChatStore = {
     getRecord(key: MessageKey): ChatEventRecord | undefined;
     getRecords(): ReadonlyArray<ChatEventRecord>;
 
+    getObservedTime(): HybridLogicalTime | undefined;
+
     hydrate(records: ReadonlyArray<ChatEventRecord>): void;
     apply(record: ChatEventRecord): void;
     clear(): void;
@@ -232,12 +193,15 @@ export type ChatStore = {
 
 function createChatStore(): ChatStore {
     const records = new Map<MessageKey, ChatEventRecord>();
+    let recordList: ReadonlyArray<ChatEventRecord> | undefined;
+    let observed: HybridLogicalTime | undefined;
     const messages = new Map<MessageKey, ChatWindowMessageType>();
     const separators = new Map<MessageKey, ChatWindowMessageType>();
     const orphans = new Map<MessageKey, Array<ChatReceiptRecord>>();
 
     let orderedKeys: ReadonlyArray<MessageKey> = [];
     let messageList: ReadonlyArray<ChatWindowMessageType> = [];
+    let messagePositions = new Map<MessageKey, number>();
     let typing = false;
     let replyTo: ReplyTarget | undefined;
     let highlighted: MessageKey | undefined;
@@ -270,22 +234,28 @@ function createChatStore(): ChatStore {
     function reindex(): void {
         const sorted = [...messages.values()].sort(compareMessages);
         messageList = sorted;
+        messagePositions = new Map(sorted.map((message, index) => [message.id, index]));
 
         const keys: MessageKey[] = [];
         const seen = new Set<MessageKey>();
-        const delta = now() - serverTime();
+        const restamped: Array<MessageKey> = [];
         let lastDay: number | undefined;
 
+        // A timestamp is an absolute instant and a calendar day is a property of the device's timezone, so which
+        // day a message belongs to needs no clock correction; applying one moves messages across midnight by the
+        // difference between the two clocks.
         const separatorFor = (timestamp: number): void => {
-            const localDay = new Date(timestamp + delta).setHours(0, 0, 0, 0);
+            const localDay = new Date(timestamp).setHours(0, 0, 0, 0);
             if (lastDay === localDay) return;
             lastDay = localDay;
-            const at = localDay - delta;
-            const key = toDateSeparatorId(at);
+            // Local midnight is negative east of UTC inside the first day of the epoch, which the id format
+            // refuses; the record keeps the true day, so ordering is unaffected.
+            const key = toDateSeparatorId(Math.max(0, localDay));
             const text = fmtDay(localDay);
             const existing = separators.get(key);
             if (existing === undefined || existing.text !== text) {
-                separators.set(key, { id: key, timestamp: at, sender: 'date', text });
+                separators.set(key, { id: key, timestamp: localDay, sender: 'date', text });
+                if (existing !== undefined) restamped.push(key);
             }
             keys.push(key);
             seen.add(key);
@@ -295,7 +265,7 @@ function createChatStore(): ChatStore {
             separatorFor(message.timestamp);
             keys.push(message.id);
         }
-        separatorFor(now());
+        separatorFor(serverTime());
 
         for (const key of [...separators.keys()]) {
             if (!seen.has(key)) separators.delete(key);
@@ -306,6 +276,9 @@ function createChatStore(): ChatStore {
             orderedKeys = keys;
             notify(keyListeners);
         }
+        for (const key of restamped) {
+            notifyMessage(key);
+        }
         notify(anyListeners);
     }
 
@@ -314,14 +287,20 @@ function createChatStore(): ChatStore {
         if (target === undefined) {
             const waiting = orphans.get(receipt.target) ?? [];
             if (!waiting.some((held) => held.id === receipt.id)) waiting.push(receipt);
+            orphans.delete(receipt.target);
             orphans.set(receipt.target, waiting);
+            while (orphans.size > MAX_ORPHAN_TARGETS) {
+                const oldest = orphans.keys().next();
+                if (oldest.done === true) break;
+                orphans.delete(oldest.value);
+            }
             return undefined;
         }
         const next = applyReceipt(target, receipt);
         if (sameMessage(target, next)) return undefined;
         messages.set(receipt.target, next);
-        const index = messageList.indexOf(target);
-        if (index >= 0) {
+        const index = messagePositions.get(receipt.target);
+        if (index !== undefined && messageList[index] === target) {
             const updated = messageList.slice();
             updated[index] = next;
             messageList = updated;
@@ -341,25 +320,24 @@ function createChatStore(): ChatStore {
         return touched;
     }
 
-    function ingest(record: ChatEventRecord): Array<MessageKey> {
+    function observe(record: ChatEventRecord): void {
+        const candidate = { physical: record.timestamp, counter: record.counter ?? 0 };
+        if (observed === undefined || compareHybridLogicalTime(candidate, observed) > 0) observed = candidate;
+    }
+
+    function ingest(record: ChatEventRecord): { touched: Array<MessageKey>; ordered: boolean } {
+        observe(record);
+        recordList = undefined;
         if (isChatMessageRecord(record)) {
-            if (record.sender === 'date') return [];
-            const existing = messages.get(record.id);
+            if (record.sender === 'date') return { touched: [], ordered: false };
             const { kind: _kind, ...message } = record;
-            if (existing === undefined) {
-                messages.set(record.id, message);
-                records.set(record.id, record);
-                return [record.id, ...drainOrphans(record.id)];
-            }
-            const merged = mergeMessage(existing, message);
+            messages.set(record.id, message);
             records.set(record.id, record);
-            if (sameMessage(existing, merged)) return [];
-            messages.set(record.id, merged);
-            return [record.id];
+            return { touched: [record.id, ...drainOrphans(record.id)], ordered: true };
         }
         records.set(record.id, record);
         const touched = project(record);
-        return touched === undefined ? [] : [touched];
+        return { touched: touched === undefined ? [] : [touched], ordered: false };
     }
 
     return {
@@ -376,9 +354,10 @@ function createChatStore(): ChatStore {
                 messageListeners.set(key, listeners);
             }
             listeners.add(listener);
+            const registered = listeners;
             return () => {
-                listeners.delete(listener);
-                if (listeners.size === 0) messageListeners.delete(key);
+                registered.delete(listener);
+                if (registered.size === 0 && messageListeners.get(key) === registered) messageListeners.delete(key);
             };
         },
         getMessage: (key) => messages.get(key) ?? separators.get(key),
@@ -396,9 +375,12 @@ function createChatStore(): ChatStore {
                 highlightListeners.set(key, listeners);
             }
             listeners.add(listener);
+            const registered = listeners;
             return () => {
-                listeners.delete(listener);
-                if (listeners.size === 0) highlightListeners.delete(key);
+                registered.delete(listener);
+                if (registered.size === 0 && highlightListeners.get(key) === registered) {
+                    highlightListeners.delete(key);
+                }
             };
         },
         isHighlighted: (key) => highlighted === key,
@@ -430,13 +412,16 @@ function createChatStore(): ChatStore {
         },
         getMessages: () => messageList,
         getRecord: (key) => records.get(key),
-        getRecords: () => [...records.values()],
+        getRecords: () => (recordList ??= [...records.values()]),
+        getObservedTime: () => observed,
 
         hydrate(next) {
-            const live = [...records.keys()];
+            const persisted = new Set<MessageKey>(next.map((record) => record.id));
+            const live = [...records.keys()].filter((key) => !persisted.has(key));
             const changed = new Set<MessageKey>();
             for (const record of next) {
-                for (const key of ingest(record)) changed.add(key);
+                if (records.has(record.id)) continue;
+                for (const key of ingest(record).touched) changed.add(key);
             }
             reindex();
             for (const key of changed) {
@@ -447,16 +432,18 @@ function createChatStore(): ChatStore {
 
         apply(record) {
             if (records.has(record.id)) return;
-            const changed = ingest(record);
-            if (changed.length === 0) {
-                if (records.has(record.id)) emit([{ kind: 'upsert', key: record.id }]);
+            const { touched, ordered } = ingest(record);
+            // A receipt whose target has not arrived yet touches no message, but the record itself is still worth
+            // persisting: it is what replays the receipt once the message lands.
+            if (touched.length === 0) {
+                emit([{ kind: 'upsert', key: record.id }]);
                 return;
             }
-            reindex();
-            for (const key of changed) {
+            if (ordered) reindex();
+            else notify(anyListeners);
+            for (const key of touched) {
                 notifyMessage(key);
             }
-            notify(anyListeners);
             emit([{ kind: 'upsert', key: record.id }]);
         },
 
@@ -464,6 +451,7 @@ function createChatStore(): ChatStore {
             const keys = [...records.keys()];
             const dropped = [...records.values()];
             records.clear();
+            recordList = undefined;
             messages.clear();
             orphans.clear();
             reindex();

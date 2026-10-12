@@ -4,7 +4,10 @@ import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import process from 'node:process';
 
-const expectedAbiVersion = 3;
+const facade = await readFile(resolve(process.cwd(), 'packages/ephemon-mls/src/lib.rs'), 'utf8');
+const declaredAbiVersion = /pub const ABI_VERSION: u32 = (\d+);/.exec(facade);
+if (declaredAbiVersion === null) throw new Error('Could not read ABI_VERSION from the MLS facade');
+const expectedAbiVersion = Number(declaredAbiVersion[1]);
 const applicationDirectory = resolve(process.cwd(), 'packages/ephemon-app/dist');
 const glue = await readFile(resolve(applicationDirectory, 'mls.min.js'));
 const wasm = await readFile(resolve(applicationDirectory, 'mls.wasm'));
@@ -76,19 +79,71 @@ try {
             const { EphemonMlsClient } = wasm_bindgen;
             const encoder = new TextEncoder();
             const decoder = new TextDecoder('utf-8', { fatal: true });
-            let alice = new EphemonMlsClient(0);
-            let bob = new EphemonMlsClient(1);
+
+            // The member number lives in the credential as four big-endian bytes; the app owns that encoding, and the
+            // facade only carries the bytes, so this harness spells it out rather than asking the facade.
+            const identityOf = (memberNumber) => new Uint8Array([0, 0, 0, memberNumber]);
+            const numberOf = (identity) => new DataView(identity.buffer, identity.byteOffset, 4).getUint32(0, false);
+            const rosterOf = (client) => {
+                const flat = client.memberIdentities();
+                const lengths = client.memberIdentityLengths();
+                const numbers = [];
+                let offset = 0;
+                for (const length of lengths) {
+                    numbers.push(numberOf(flat.slice(offset, offset + length)));
+                    offset += length;
+                }
+                return numbers.sort((left, right) => left - right);
+            };
+            const splitSnapshot = (client) => {
+                const bytes = client.storageSnapshot();
+                const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+                const count = view.getUint32(0, false);
+                const keyBytes = view.getUint32(4, false);
+                const keyLengths = new Uint32Array(count);
+                const blobLengths = new Uint32Array(count);
+                for (let index = 0; index < count; index += 1) keyLengths[index] = view.getUint32(8 + index * 4, false);
+                for (let index = 0; index < count; index += 1) {
+                    blobLengths[index] = view.getUint32(8 + (count + index) * 4, false);
+                }
+                const blobs = 8 + count * 8;
+                return {
+                    identity: client.identity.slice(),
+                    signingPublicKey: client.signingPublicKey.slice(),
+                    groupId: client.groupId.slice(),
+                    keys: bytes.slice(blobs, blobs + keyBytes),
+                    keyLengths,
+                    blobs: bytes.slice(blobs + keyBytes),
+                    blobLengths,
+                    bytes: bytes.byteLength,
+                };
+            };
+            const restore = (parts) =>
+                EphemonMlsClient.restore(
+                    parts.identity,
+                    parts.signingPublicKey,
+                    parts.groupId,
+                    parts.keys,
+                    parts.keyLengths,
+                    parts.blobs,
+                    parts.blobLengths,
+                );
+
+            let alice = new EphemonMlsClient(identityOf(0));
+            let bob = new EphemonMlsClient(identityOf(1));
             alice.createGroup(encoder.encode('ephemon-browser-test-group'));
             const keyPackage = bob.createKeyPackage();
             const add = alice.stageAddMember(keyPackage);
             const commit = add.commit;
             const welcome = add.welcome;
+            const claimed = numberOf(add.claimedIdentity);
             add.free();
+            if (claimed !== 1) throw new Error(`Key package claimed member ${claimed} rather than 1`);
             alice.mergePendingCommit();
             bob.joinFromWelcome(welcome);
 
-            const aliceRoster = Array.from(alice.memberNumbers());
-            const bobRoster = Array.from(bob.memberNumbers());
+            const aliceRoster = rosterOf(alice);
+            const bobRoster = rosterOf(bob);
             if (alice.epoch() !== 1n || bob.epoch() !== 1n) throw new Error('MLS epoch did not advance to 1');
             if (aliceRoster.join(',') !== '0,1' || bobRoster.join(',') !== '0,1') {
                 throw new Error(`Unexpected MLS rosters: Alice=${aliceRoster}; Bob=${bobRoster}`);
@@ -99,36 +154,38 @@ try {
             const serializedFirstMessage = Array.from(firstMessage);
             const processedFirst = bob.processApplicationMessage(firstMessage);
             if (
-                processedFirst.senderMemberNumber !== 0 ||
+                !processedFirst.senderIsMember ||
+                numberOf(processedFirst.senderIdentity) !== 0 ||
                 decoder.decode(processedFirst.payload) !== decoder.decode(firstPlaintext)
             ) {
-                throw new Error('Bob did not authenticate and decrypt Alice as MemberNumber 0');
+                throw new Error('Bob did not authenticate and decrypt Alice as member 0');
             }
             processedFirst.free();
 
-            const aliceCheckpoint = alice.exportCheckpoint();
-            const bobCheckpoint = bob.exportCheckpoint();
+            const aliceParts = splitSnapshot(alice);
+            const bobParts = splitSnapshot(bob);
             const metrics = {
                 keyPackageBytes: keyPackage.byteLength,
                 commitBytes: commit.byteLength,
                 welcomeBytes: welcome.byteLength,
                 applicationMessageBytes: firstMessage.byteLength,
-                aliceCheckpointBytes: aliceCheckpoint.byteLength,
-                bobCheckpointBytes: bobCheckpoint.byteLength,
+                aliceSnapshotBytes: aliceParts.bytes,
+                bobSnapshotBytes: bobParts.bytes,
             };
             alice.free();
             bob.free();
 
-            alice = EphemonMlsClient.importCheckpoint(aliceCheckpoint);
-            bob = EphemonMlsClient.importCheckpoint(bobCheckpoint);
+            alice = restore(aliceParts);
+            bob = restore(bobParts);
             const secondPlaintext = encoder.encode('real OpenMLS message after restart');
             const secondMessage = bob.createApplicationMessage(secondPlaintext);
             const processedSecond = alice.processApplicationMessage(secondMessage);
             if (
-                processedSecond.senderMemberNumber !== 1 ||
+                !processedSecond.senderIsMember ||
+                numberOf(processedSecond.senderIdentity) !== 1 ||
                 decoder.decode(processedSecond.payload) !== decoder.decode(secondPlaintext)
             ) {
-                throw new Error('Alice did not authenticate and decrypt restored Bob as MemberNumber 1');
+                throw new Error('Alice did not authenticate and decrypt restored Bob as member 1');
             }
             processedSecond.free();
             alice.free();
@@ -170,11 +227,22 @@ try {
                         worker.postMessage({ protocolVersion, requestId: id, ...payload });
                     });
                 };
+                const rosterFromInspection = (inspection) => {
+                    const flat = inspection.memberIdentities ?? new Uint8Array();
+                    const lengths = inspection.memberIdentityLengths ?? new Uint32Array();
+                    const numbers = [];
+                    let offset = 0;
+                    for (const length of lengths) {
+                        numbers.push(numberOf(Uint8Array.from(flat).slice(offset, offset + length)));
+                        offset += length;
+                    }
+                    return numbers.sort((left, right) => left - right);
+                };
                 const load = (conversationId, memberNumber) =>
                     rpc({
                         kind: 'load',
                         conversationId,
-                        memberNumber,
+                        identity: identityOf(memberNumber),
                         checkpoint: checkpoints.get(conversationId),
                     });
                 const mutate = async (conversationId, command) => {
@@ -220,7 +288,7 @@ try {
                     message: beforeRestartMessage.message,
                 });
                 if (
-                    beforeRestartProcessed.senderMemberNumber !== 0 ||
+                    numberOf(beforeRestartProcessed.senderIdentity) !== 0 ||
                     decoder.decode(beforeRestartProcessed.payload) !== decoder.decode(beforeRestartPlaintext)
                 ) {
                     throw new Error('Worker did not authenticate Alice before restart');
@@ -249,7 +317,7 @@ try {
                 await rpc({
                     kind: 'load',
                     conversationId: recoveryConversation,
-                    memberNumber: 8,
+                    identity: identityOf(8),
                     checkpoint: recoverable.checkpoint,
                 });
                 const recoveryInspection = await rpc({ kind: 'inspect', conversationId: recoveryConversation });
@@ -262,7 +330,7 @@ try {
                     await rpc({
                         kind: 'load',
                         conversationId: aliceConversation,
-                        memberNumber: 0,
+                        identity: identityOf(0),
                         checkpoint: Uint8Array.from([1, 2, 3]),
                     });
                 } catch {
@@ -277,7 +345,7 @@ try {
                 const beforeRestartInspection = await rpc({ kind: 'inspect', conversationId: aliceConversation });
                 if (
                     beforeRestartInspection.epoch !== '1' ||
-                    Array.from(beforeRestartInspection.memberNumbers || []).join(',') !== '0,1'
+                    rosterFromInspection(beforeRestartInspection).join(',') !== '0,1'
                 ) {
                     throw new Error('Unexpected worker MLS state before restart');
                 }
@@ -297,7 +365,7 @@ try {
                     message: afterRestartMessage.message,
                 });
                 if (
-                    afterRestartProcessed.senderMemberNumber !== 1 ||
+                    numberOf(afterRestartProcessed.senderIdentity) !== 1 ||
                     decoder.decode(afterRestartProcessed.payload) !== decoder.decode(afterRestartPlaintext)
                 ) {
                     throw new Error('Worker did not authenticate Bob after restart');
@@ -306,7 +374,7 @@ try {
                 worker.terminate();
                 return {
                     epoch: afterRestartInspection.epoch,
-                    roster: Array.from(afterRestartInspection.memberNumbers || []),
+                    roster: rosterFromInspection(afterRestartInspection),
                     revisions: Object.fromEntries(revisions),
                     checkpointBytes: Object.fromEntries(
                         [...checkpoints].map(([conversationId, checkpoint]) => [conversationId, checkpoint.byteLength]),

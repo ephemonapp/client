@@ -24,6 +24,8 @@ test('a group of three carries messages, replies and reactions, and survives eac
         await peer2.waitForConnected();
 
         await master.createGroupFromSidebar([peer1.publicKey, peer2.publicKey], 'Master');
+        await peer1.acceptGroupInvite();
+        await peer2.acceptGroupInvite();
         for (const app of everyone) await expect(app.groupRow).toHaveCount(1);
         await peer1.selectGroup();
         await peer1.nameSelfInGroup('Peer One');
@@ -86,7 +88,7 @@ test('a group of three carries messages, replies and reactions, and survives eac
         ];
         for (const reaction of reactions) {
             await reaction.from.reactTo(reaction.to, reaction.emoji);
-            await expect(reaction.from.reactionOn(reaction.to)).toHaveCount(1);
+            await expect(reaction.from.peerReactions(reaction.to)).toHaveCount(1);
         }
         const settled: Array<{ author: EphemonApp; text: string; emojis: ReadonlyArray<string> }> = [
             { author: master, text: said.master, emojis: ['👍', '🔥'] },
@@ -95,7 +97,7 @@ test('a group of three carries messages, replies and reactions, and survives eac
         ];
         for (const entry of settled) {
             for (const app of everyone) {
-                const bubble = app === entry.author ? app.ownReactions(entry.text) : app.reactionOn(entry.text);
+                const bubble = app === entry.author ? app.ownReactions(entry.text) : app.peerReactions(entry.text);
                 await expect(bubble).toHaveCount(1);
                 await expect(bubble).toHaveText(new RegExp(`(${entry.emojis.join('|')})\\s*\\+`));
             }

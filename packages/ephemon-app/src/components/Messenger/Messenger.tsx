@@ -1,5 +1,5 @@
 import { useConnectionCallbacksCache } from '../../hooks/useConnectionCallbacksCache';
-import { useEphemon } from '../../hooks/useEphemon';
+import { GroupInviteDecision, useEphemon } from '../../hooks/useEphemon';
 import { useIdleLock } from '../../hooks/useIdleLock';
 import { useMediaQuery, MOBILE_QUERY } from '../../hooks/useMediaQuery';
 import { PasswordState } from '../../hooks/usePasswordCheck';
@@ -22,6 +22,7 @@ import { showNotification } from '../../utils/functions';
 import BlockedModal from '../modals/BlockedModal';
 import ConnectModal from '../modals/ConnectModal';
 import ContactPickerModal, { PickableContact } from '../modals/ContactPickerModal';
+import GroupInviteModal from '../modals/GroupInviteModal';
 import IdleLockModal from '../modals/IdleLockModal';
 import IncomingDialModal from '../modals/IncomingDialModal';
 import Modal from '../modals/Modal';
@@ -50,6 +51,13 @@ type ModalState =
     | { kind: 'newGroup' }
     | { kind: 'memberName'; id: ConversationId; current: string }
     | { kind: 'incomingDial'; publicKey: string; decide: (accepted: boolean, block: boolean) => void }
+    | {
+          kind: 'groupInvite';
+          inviterPublicKey: string;
+          inviterName: string;
+          groupName: string;
+          decide: (decision: GroupInviteDecision) => void;
+      }
     | { kind: 'blocked' }
     | { kind: 'receipts'; entries: ReadonlyArray<ReceiptListEntry> };
 
@@ -82,6 +90,16 @@ const Messenger: React.FC<MessengerProps> = ({
     const [modal, setModal] = useState<ModalState>(null);
     const [updateDismissed, setUpdateDismissed] = useState(false);
 
+    const pendingDialRef = useRef<((accepted: boolean) => void) | undefined>(undefined);
+
+    useEffect(() => {
+        if (modal?.kind === 'incomingDial') return;
+        const pending = pendingDialRef.current;
+        if (pending === undefined) return;
+        pendingDialRef.current = undefined;
+        pending(false);
+    }, [modal]);
+
     const focusOnDial = useCallback(() => Promise.resolve(true), []);
     const requestDial = useCallback((peerKey: string, alreadyExists: boolean) => {
         if (alreadyExists) return Promise.resolve(true);
@@ -89,10 +107,13 @@ const Messenger: React.FC<MessengerProps> = ({
             showNotification('Incoming connection', { body: shortKey(peerKey) });
         }
         return new Promise<boolean>((resolve) => {
+            pendingDialRef.current?.(false);
+            pendingDialRef.current = resolve;
             setModal({
                 kind: 'incomingDial',
                 publicKey: peerKey,
                 decide: (accepted: boolean, block: boolean) => {
+                    if (pendingDialRef.current === resolve) pendingDialRef.current = undefined;
                     setModal(null);
                     if (block) conversationsRef.current.blocked.block(peerKey);
                     resolve(accepted);
@@ -100,6 +121,41 @@ const Messenger: React.FC<MessengerProps> = ({
             });
         });
     }, []);
+    const pendingInviteRef = useRef<((decision: GroupInviteDecision) => void) | undefined>(undefined);
+
+    useEffect(() => {
+        if (modal?.kind === 'groupInvite') return;
+        const pending = pendingInviteRef.current;
+        if (pending === undefined) return;
+        pendingInviteRef.current = undefined;
+        pending('dismiss');
+    }, [modal]);
+
+    const requestGroupInvite = useCallback((inviterPublicKey: string, groupName: string) => {
+        const inviter = conversationsRef.current.available.find(
+            (conversation) => conversation.kind === 'direct' && conversation.publicKey === inviterPublicKey,
+        );
+        const inviterName = displayName(inviter?.name, inviterPublicKey);
+        if (document.hidden || !document.hasFocus()) {
+            showNotification('Group invitation', { body: `${inviterName} invites you to ${groupName}` });
+        }
+        return new Promise<GroupInviteDecision>((resolve) => {
+            pendingInviteRef.current?.('dismiss');
+            pendingInviteRef.current = resolve;
+            setModal({
+                kind: 'groupInvite',
+                inviterPublicKey,
+                inviterName,
+                groupName,
+                decide: (decision: GroupInviteDecision) => {
+                    if (pendingInviteRef.current === resolve) pendingInviteRef.current = undefined;
+                    setModal(null);
+                    resolve(decision);
+                },
+            });
+        });
+    }, []);
+
     const onIncomingConnection = useCallback(() => {
         setPane('chat');
         setShowConnectMobile(false);
@@ -136,6 +192,7 @@ const Messenger: React.FC<MessengerProps> = ({
         onConnectionStateChanged,
         onConnectionTransportChanged,
         onConnectionError,
+        requestGroupInvite,
     );
 
     const needUpdate = metadata.needUpdate;
@@ -166,10 +223,7 @@ const Messenger: React.FC<MessengerProps> = ({
     }, [publicKey, createConnection, openConnection, debugSelfConnectValue]);
 
     const rows: Array<ConversationRowData> = conversations.available;
-    const ids = useMemo(
-        () => conversations.available.map((conversation) => conversation.id),
-        [conversations.available],
-    );
+    const ids = useMemo(() => rows.map((row) => row.id), [rows]);
 
     useEffect(() => {
         if (!isMobile) return;
@@ -200,7 +254,7 @@ const Messenger: React.FC<MessengerProps> = ({
     const ownGroupName = useCallback((id: ConversationId): string | undefined => {
         const conversation = conversationsRef.current.available.find((candidate) => candidate.id === id);
         if (conversation?.kind !== 'group') return undefined;
-        return conversation.mlsBootstrap?.roster?.find((member) => member.publicKey === publicKeyRef.current)?.name;
+        return conversation.group?.members.find((member) => member.publicKey === publicKeyRef.current)?.name;
     }, []);
 
     const openMemberName = useCallback(
@@ -254,7 +308,17 @@ const Messenger: React.FC<MessengerProps> = ({
     const onCloseConnectMobile = useCallback(() => setShowConnectMobile(false), []);
     const onDismissUpdate = useCallback(() => setUpdateDismissed(true), []);
     const onApplyUpdate = useCallback(() => window.location.reload(), []);
-    const closeModal = useCallback(() => setModal(null), []);
+    const closeModal = useCallback(() => {
+        if (modal?.kind === 'incomingDial') {
+            modal.decide(false, false);
+            return;
+        }
+        if (modal?.kind === 'groupInvite') {
+            modal.decide('dismiss');
+            return;
+        }
+        setModal(null);
+    }, [modal]);
     const onBackToList = useCallback(() => setPane('list'), []);
 
     const openMyQr = useCallback(() => {
@@ -290,7 +354,7 @@ const Messenger: React.FC<MessengerProps> = ({
 
     const rosterKeysOf = useCallback((id: ConversationId): Array<string> => {
         const conversation = conversationsRef.current.available.find((candidate) => candidate.id === id);
-        return (conversation?.mlsBootstrap?.roster ?? []).map((member) => member.publicKey);
+        return (conversation?.group?.members ?? []).map((member) => member.publicKey);
     }, []);
 
     const contactsExcept = useCallback((excluded: ReadonlyArray<string>): Array<PickableContact> => {
@@ -341,9 +405,11 @@ const Messenger: React.FC<MessengerProps> = ({
         (id: ConversationId, keys: ReadonlyArray<string>) => {
             setModal(null);
             const lifecycle = conversationsRef.current.callbacks.lifecycle;
-            for (const member of contactsOf(keys)) {
-                lifecycle.addMember(id, member.publicKey, member.serverUrl).catch(() => {});
-            }
+            void contactsOf(keys).reduce(
+                (queue, member) =>
+                    queue.then(() => lifecycle.addMember(id, member.publicKey, member.serverUrl)).catch(() => {}),
+                Promise.resolve(),
+            );
         },
         [contactsOf],
     );
@@ -407,8 +473,9 @@ const Messenger: React.FC<MessengerProps> = ({
                         publicKey={conversation.publicKey}
                         group={conversation.kind === 'group'}
                         memberName={ownGroupName(conversation.id)}
-                        members={conversation.mlsBootstrap?.roster}
-                        ownMemberNumber={conversation.mlsBootstrap?.ownMemberNumber}
+                        members={conversation.group?.members}
+                        ownMemberNumber={conversation.group?.ownMemberNumber}
+                        owner={conversation.group?.owner}
                         onOpenReceipts={onReceipts}
                         onOpenMemberName={openMemberName}
                         onIntroduce={onIntroduce}
@@ -462,6 +529,16 @@ const Messenger: React.FC<MessengerProps> = ({
                             onAccept={() => modal.decide(true, false)}
                             onDecline={() => modal.decide(false, false)}
                             onBlock={() => modal.decide(false, true)}
+                        />
+                    )}
+                    {modal.kind === 'groupInvite' && (
+                        <GroupInviteModal
+                            inviterPublicKey={modal.inviterPublicKey}
+                            inviterName={modal.inviterName}
+                            groupName={modal.groupName}
+                            onAccept={() => modal.decide('accept')}
+                            onDecline={() => modal.decide('decline')}
+                            onBlock={() => modal.decide('block')}
                         />
                     )}
                     {modal.kind === 'receipts' && <ReceiptListModal entries={modal.entries} />}

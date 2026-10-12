@@ -14,9 +14,7 @@ test('self chat replays an undelivered message after retry without MLS', async (
         await app.connectTo(app.publicKey);
         await app.waitForConnected();
 
-        await app.page.reload({ waitUntil: 'domcontentloaded' });
-        await app.page.waitForSelector('.lock__card', { timeout: 60_000 });
-        await app.unlock(password);
+        await app.restart(password);
         await app.selectConversation(app.publicKey);
 
         const text = `offline self message ${Date.now()}`;

@@ -83,7 +83,7 @@ export function toSelfChatUpdate(operation: ChatOperation): AuthoredSelfChatUpda
             const target = timestampOfRecordId(operation.target);
             const record: ChatEventRecord = {
                 kind: operation.kind,
-                id: toSelfChatRecordId('you', operation.kind, at),
+                id: toSelfChatRecordId('you', operation.kind, operation.kind === 'reaction' ? at : target),
                 sender: 'you',
                 timestamp: at,
                 target: operation.target,
@@ -126,7 +126,7 @@ export function fromSelfChatUpdate(update: UpdateType): Array<InboundChatEvent> 
             kind: 'record',
             record: {
                 kind,
-                id: toSelfChatRecordId('peer', kind, timestamp),
+                id: toSelfChatRecordId('peer', kind, kind === 'reaction' ? timestamp : update.id),
                 sender: 'peer',
                 timestamp,
                 target: authored,

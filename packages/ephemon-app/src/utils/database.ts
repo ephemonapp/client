@@ -1,3 +1,4 @@
+import { Reader, Writer } from '../mls/byteCodec';
 import { ChatEventRecord } from '../types/chatRecord';
 import { Bytes, Cryptography, KDF_ITERATIONS, WrappedKey } from './cryptography';
 import { committed, readAll, toPromise } from './idb';
@@ -53,28 +54,70 @@ type MlsCheckpointRow = EncryptedRow & {
     revision: number;
 };
 
-type MlsCheckpointEnvelope = {
+function encodeCheckpointEnvelope(
+    id: number,
+    revision: number,
+    checkpoint: Uint8Array,
+    companion?: Uint8Array,
+    chain?: Uint8Array,
+): Uint8Array {
+    const writer = new Writer();
+    writer.u32(id);
+    writer.u32(revision);
+    writer.variable(checkpoint);
+    writer.variable(companion ?? new Uint8Array());
+    writer.variable(chain ?? new Uint8Array());
+    return writer.finish();
+}
+
+function decodeCheckpointEnvelope(bytes: Uint8Array): {
     id: number;
     revision: number;
-    checkpoint: Array<number>;
-    companion?: Array<number>;
-    chain?: Array<number>;
-};
+    checkpoint: Uint8Array<ArrayBuffer>;
+    companion?: Uint8Array<ArrayBuffer>;
+    chain?: Uint8Array<ArrayBuffer>;
+} {
+    const reader = new Reader(bytes, 'MLS checkpoint envelope');
+    const id = reader.u32();
+    const revision = reader.u32();
+    const checkpoint = Uint8Array.from(reader.variable());
+    const companion = Uint8Array.from(reader.variable());
+    const chain = Uint8Array.from(reader.variable());
+    reader.finish();
+    return {
+        id,
+        revision,
+        checkpoint,
+        companion: companion.byteLength > 0 ? companion : undefined,
+        chain: chain.byteLength > 0 ? chain : undefined,
+    };
+}
+
+function encodeCommitEnvelope(commit: StoredMlsCommit): Uint8Array {
+    const writer = new Writer();
+    writer.u64(BigInt(commit.epoch));
+    writer.variable(commit.authenticator);
+    writer.variable(commit.commit);
+    return writer.finish();
+}
+
+function decodeCommitEnvelope(bytes: Uint8Array): StoredMlsCommit {
+    const reader = new Reader(bytes, 'MLS commit envelope');
+    const epoch = reader.u64().toString();
+    const authenticator = Uint8Array.from(reader.variable());
+    const commit = Uint8Array.from(reader.variable());
+    reader.finish();
+    return {
+        epoch,
+        authenticator,
+        commit,
+    };
+}
 
 export type StoredMlsCommit = {
     epoch: string;
     authenticator: Uint8Array<ArrayBuffer>;
-    parentEpoch?: string;
-    parentAuthenticator?: Uint8Array<ArrayBuffer>;
     commit: Uint8Array<ArrayBuffer>;
-};
-
-type MlsCommitEnvelope = {
-    epoch: string;
-    authenticator: Array<number>;
-    parentEpoch?: string;
-    parentAuthenticator?: Array<number>;
-    commit: Array<number>;
 };
 
 export type StoredMlsCheckpoint = {
@@ -107,7 +150,7 @@ export interface Database {
 
     getMessages(chatId: number): Promise<Array<ChatEventRecord>>;
 
-    putMessages(chatId: number, upserts: ReadonlyArray<ChatEventRecord>, deletes: ReadonlyArray<string>): Promise<void>;
+    putMessages(chatId: number, upserts: ReadonlyArray<ChatEventRecord>): Promise<void>;
 
     clearMessages(chatId: number): Promise<void>;
 
@@ -123,6 +166,7 @@ export interface Database {
 
     deleteMlsCheckpoint(conversationId: number): Promise<void>;
 
+    /** Reads the whole log, or only the newest `limit` rows when one is given. */
     getMlsCommits(conversationId: number): Promise<Array<StoredMlsCommit>>;
 
     appendMlsCommit(conversationId: number, commit: StoredMlsCommit): Promise<void>;
@@ -146,6 +190,13 @@ export default function getDatabase(logger: Logger, cryptography: Cryptography):
     let stale = false;
 
     const messageIndexes = new Map<number, Map<string, number>>();
+
+    async function loadMessageIndex(chatId: number): Promise<Map<string, number>> {
+        const cached = messageIndexes.get(chatId);
+        if (cached !== undefined) return cached;
+        await instance.getMessages(chatId);
+        return messageIndexes.get(chatId) ?? new Map<string, number>();
+    }
 
     function request(name: string, version?: number): Promise<IDBDatabase> {
         return new Promise<IDBDatabase>((resolve, reject) => {
@@ -316,7 +367,7 @@ export default function getDatabase(logger: Logger, cryptography: Cryptography):
         return created;
     }
 
-    return {
+    const instance: Database = {
         initialize(config: DatabaseConfig) {
             logger.debug(`[database] Initialized indexedDB with name ${config.dbName}.`);
             initialName = config.dbName;
@@ -398,12 +449,19 @@ export default function getDatabase(logger: Logger, cryptography: Cryptography):
             const rows = await readAll<EncryptedRow>(database, table);
             const results: Array<{ id: RecordKey; value: TypeData }> = [];
             for (const row of rows) {
-                results.push(
-                    await cryptography.decrypt<{ id: RecordKey; value: TypeData }>(key, {
+                try {
+                    const decoded = await cryptography.decrypt<{ id: RecordKey; value: TypeData }>(key, {
                         iv: row.iv,
                         data: row.data,
-                    }),
-                );
+                    });
+                    if (decoded.id !== row.id) {
+                        logger.warn(`[database] Row '${row.id}' in table '${table}' carries a mismatched key.`);
+                        continue;
+                    }
+                    results.push(decoded);
+                } catch (error) {
+                    logger.warn(`[database] Row '${row.id}' in table '${table}' could not be read.`, error);
+                }
             }
             return results;
         },
@@ -450,20 +508,12 @@ export default function getDatabase(logger: Logger, cryptography: Cryptography):
             return messages;
         },
 
-        async putMessages(
-            chatId: number,
-            upserts: ReadonlyArray<ChatEventRecord>,
-            deletes: ReadonlyArray<string>,
-        ): Promise<void> {
-            if (upserts.length === 0 && deletes.length === 0) return;
+        async putMessages(chatId: number, upserts: ReadonlyArray<ChatEventRecord>): Promise<void> {
+            if (upserts.length === 0) return;
             const database = await open();
             const key = requireKey();
 
-            let index = messageIndexes.get(chatId);
-            if (index === undefined) {
-                index = new Map<string, number>();
-                messageIndexes.set(chatId, index);
-            }
+            const index = await loadMessageIndex(chatId);
 
             const prepared: Array<{ key: string; iv: Bytes; data: ArrayBuffer }> = [];
             for (const message of upserts) {
@@ -473,7 +523,6 @@ export default function getDatabase(logger: Logger, cryptography: Cryptography):
             }
 
             const assigned = new Map<string, number>();
-            const removed: Array<string> = [];
 
             await new Promise<void>((resolve, reject) => {
                 const transaction = database.transaction([STORE_MESSAGES], 'readwrite');
@@ -490,12 +539,6 @@ export default function getDatabase(logger: Logger, cryptography: Cryptography):
                         }
                         store.put({ c: chatId, n, iv: item.iv, data: item.data } satisfies MessageRow);
                     }
-                    for (const messageKey of deletes) {
-                        const n = index.get(messageKey);
-                        if (n === undefined) continue;
-                        store.delete([chatId, n]);
-                        removed.push(messageKey);
-                    }
                 };
                 transaction.oncomplete = () => resolve();
                 transaction.onerror = () => reject(transaction.error);
@@ -504,9 +547,6 @@ export default function getDatabase(logger: Logger, cryptography: Cryptography):
 
             for (const [messageKey, n] of assigned) {
                 index.set(messageKey, n);
-            }
-            for (const messageKey of removed) {
-                index.delete(messageKey);
             }
         },
 
@@ -526,18 +566,17 @@ export default function getDatabase(logger: Logger, cryptography: Cryptography):
                 transaction.objectStore(STORE_MLS_CHECKPOINTS).get(conversationId),
             );
             if (row === undefined) return null;
-            const envelope = await cryptography.decrypt<MlsCheckpointEnvelope>(key, {
-                iv: row.iv,
-                data: row.data,
-            });
+            const envelope = decodeCheckpointEnvelope(
+                await cryptography.decryptBytes(key, { iv: row.iv, data: row.data }),
+            );
             if (envelope.id !== conversationId || envelope.revision !== row.revision) {
                 throw new Error(`[database] MLS checkpoint '${conversationId}' carries mismatched metadata.`);
             }
             return {
                 revision: row.revision,
-                checkpoint: Uint8Array.from(envelope.checkpoint),
-                companion: envelope.companion === undefined ? undefined : Uint8Array.from(envelope.companion),
-                chain: envelope.chain === undefined ? undefined : Uint8Array.from(envelope.chain),
+                checkpoint: envelope.checkpoint,
+                companion: envelope.companion,
+                chain: envelope.chain,
             };
         },
 
@@ -551,13 +590,10 @@ export default function getDatabase(logger: Logger, cryptography: Cryptography):
             const database = await open();
             const revision = (expectedRevision ?? 0) + 1;
             const key = requireKey();
-            const { iv, data } = await cryptography.encrypt(key, {
-                id: conversationId,
-                revision,
-                checkpoint: Array.from(checkpoint),
-                companion: companion === undefined ? undefined : Array.from(companion),
-                chain: chain === undefined ? undefined : Array.from(chain),
-            } satisfies MlsCheckpointEnvelope);
+            const { iv, data } = await cryptography.encryptBytes(
+                key,
+                encodeCheckpointEnvelope(conversationId, revision, checkpoint, companion, chain),
+            );
 
             await new Promise<void>((resolve, reject) => {
                 const transaction = database.transaction([STORE_MLS_CHECKPOINTS], 'readwrite');
@@ -596,20 +632,13 @@ export default function getDatabase(logger: Logger, cryptography: Cryptography):
             );
             const commits: Array<StoredMlsCommit> = [];
             for (const row of rows) {
-                const envelope = await cryptography.decrypt<MlsCommitEnvelope>(key, {
-                    iv: row.iv,
-                    data: row.data,
-                });
-                commits.push({
-                    epoch: envelope.epoch,
-                    authenticator: Uint8Array.from(envelope.authenticator),
-                    parentEpoch: envelope.parentEpoch,
-                    parentAuthenticator:
-                        envelope.parentAuthenticator === undefined
-                            ? undefined
-                            : Uint8Array.from(envelope.parentAuthenticator),
-                    commit: Uint8Array.from(envelope.commit),
-                });
+                try {
+                    commits.push(
+                        decodeCommitEnvelope(await cryptography.decryptBytes(key, { iv: row.iv, data: row.data })),
+                    );
+                } catch (error) {
+                    logger.error(`[database] Skipping unreadable MLS commit row ${conversationId}/${row.n}.`, error);
+                }
             }
             return commits;
         },
@@ -617,14 +646,7 @@ export default function getDatabase(logger: Logger, cryptography: Cryptography):
         async appendMlsCommit(conversationId: number, commit: StoredMlsCommit): Promise<void> {
             const database = await open();
             const key = requireKey();
-            const { iv, data } = await cryptography.encrypt(key, {
-                epoch: commit.epoch,
-                authenticator: Array.from(commit.authenticator),
-                parentEpoch: commit.parentEpoch,
-                parentAuthenticator:
-                    commit.parentAuthenticator === undefined ? undefined : Array.from(commit.parentAuthenticator),
-                commit: Array.from(commit.commit),
-            } satisfies MlsCommitEnvelope);
+            const { iv, data } = await cryptography.encryptBytes(key, encodeCommitEnvelope(commit));
             await new Promise<void>((resolve, reject) => {
                 const transaction = database.transaction([STORE_MLS_COMMITS], 'readwrite');
                 const store = transaction.objectStore(STORE_MLS_COMMITS);
@@ -654,4 +676,6 @@ export default function getDatabase(logger: Logger, cryptography: Cryptography):
             await committed(transaction);
         },
     };
+
+    return instance;
 }

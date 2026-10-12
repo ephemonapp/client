@@ -803,6 +803,7 @@ describe('ConnectionSaga (Error Handling and Cleanup)', () => {
 
         expect(mockLogger.error).toHaveBeenCalledWith(
             expect.stringContaining('Error sending data in outgoing connection with mock-remote-public-key'),
+            expect.anything(),
         );
 
         saga.abort();

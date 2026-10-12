@@ -1,6 +1,6 @@
 import { ConnectionIssue } from '@ephemon/core';
 
-export type NoticeCode = ConnectionIssue | 'server-private' | 'server-offline' | 'server-insecure';
+export type NoticeCode = ConnectionIssue | 'server-private' | 'server-offline' | 'server-insecure' | 'sync-failed';
 
 export type ConnectionNotice = {
     code: NoticeCode;
@@ -22,6 +22,8 @@ export function noticeText(notice: ConnectionNotice, name: string): string {
             return `${server} refused the connection request.`;
         case 'signalling-unavailable':
             return `Could not reach the signalling server, so ${name} cannot be contacted right now.`;
+        case 'sync-failed':
+            return `Could not catch up with ${name}. Messages may be missing until this succeeds.`;
     }
 }
 
@@ -43,5 +45,7 @@ export function noticeLabel(notice: ConnectionNotice): string {
             return 'request refused';
         case 'signalling-unavailable':
             return 'no signalling';
+        case 'sync-failed':
+            return 'not caught up';
     }
 }

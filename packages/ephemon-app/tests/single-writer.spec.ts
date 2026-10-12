@@ -26,6 +26,12 @@ test('a second tab observes instead of writing, and is promoted when the first o
         await expect(first.observerNotice).toHaveCount(0);
         await expect(first.composer).toBeEnabled();
 
+        await second.openKebab();
+        await expect(second.kebabItems().filter({ hasText: /Delete chat|Clear history|Rename contact/ })).toHaveCount(
+            0,
+        );
+        await second.closeKebab();
+
         const whileObserving = `written while the second tab observes ${Date.now()}`;
         await first.sendMessage(whileObserving);
         await expect(second.ownBubble(whileObserving)).toHaveCount(1, { timeout: 60_000 });

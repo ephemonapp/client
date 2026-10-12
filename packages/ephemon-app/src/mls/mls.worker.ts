@@ -1,4 +1,7 @@
+import { sameBytes } from './byteCodec';
+import { decodeCheckpoint, encodeCheckpoint } from './checkpointCodec';
 import {
+    classifyMlsError,
     DEFAULT_MLS_WASM_ASSET_URLS,
     MLS_WASM_ABI_VERSION,
     MLS_WORKER_PROTOCOL_VERSION,
@@ -35,6 +38,60 @@ let nextOperationId = 1;
 let bindingsPromise: Promise<WasmBindgen> | undefined;
 let loadedAssets: MlsWasmAssetUrls | undefined;
 
+function splitStorageSnapshot(snapshotBytes: Uint8Array): {
+    keys: Uint8Array;
+    keyLengths: Uint32Array;
+    values: Uint8Array;
+    valueLengths: Uint32Array;
+} {
+    const view = new DataView(snapshotBytes.buffer, snapshotBytes.byteOffset, snapshotBytes.byteLength);
+    const count = view.getUint32(0, false);
+    const keyBytes = view.getUint32(4, false);
+    const keyLengths = new Uint32Array(count);
+    const valueLengths = new Uint32Array(count);
+    for (let index = 0; index < count; index += 1) keyLengths[index] = view.getUint32(8 + index * 4, false);
+    for (let index = 0; index < count; index += 1) {
+        valueLengths[index] = view.getUint32(8 + (count + index) * 4, false);
+    }
+    const blobs = 8 + count * 8;
+    return {
+        keys: snapshotBytes.slice(blobs, blobs + keyBytes),
+        keyLengths,
+        values: snapshotBytes.slice(blobs + keyBytes),
+        valueLengths,
+    };
+}
+
+function snapshot(client: WasmMlsClient): Uint8Array {
+    return encodeCheckpoint({
+        identity: copy(client.identity),
+        signingPublicKey: copy(client.signingPublicKey),
+        groupId: copy(client.groupId),
+        ...splitStorageSnapshot(client.storageSnapshot()),
+    });
+}
+
+async function revert(session: Session, before: Uint8Array): Promise<void> {
+    const bindings = await loadBindings(loadedAssets ?? DEFAULT_MLS_WASM_ASSET_URLS);
+    const restored = restoreClient(bindings, before);
+    session.client.free();
+    session.client = restored;
+    before.fill(0);
+}
+
+function restoreClient(bindings: WasmBindgen, checkpoint: Uint8Array): WasmMlsClient {
+    const parts = decodeCheckpoint(checkpoint);
+    return bindings.EphemonMlsClient.restore(
+        parts.identity,
+        parts.signingPublicKey,
+        parts.groupId,
+        parts.keys,
+        parts.keyLengths,
+        parts.values,
+        parts.valueLengths,
+    );
+}
+
 function copy(bytes: Uint8Array): Uint8Array {
     return Uint8Array.from(bytes);
 }
@@ -49,7 +106,7 @@ async function loadBindings(assets: MlsWasmAssetUrls): Promise<WasmBindgen> {
     }
     if (bindingsPromise !== undefined) return bindingsPromise;
     loadedAssets = assets;
-    bindingsPromise = (async () => {
+    const loading = (async () => {
         scope.importScripts(assets.glue);
         const bindings = typeof wasm_bindgen === 'undefined' ? undefined : wasm_bindgen;
         if (bindings === undefined) throw new Error('MLS WASM glue did not expose wasm_bindgen');
@@ -60,7 +117,13 @@ async function loadBindings(assets: MlsWasmAssetUrls): Promise<WasmBindgen> {
         }
         return bindings;
     })();
-    return bindingsPromise;
+    bindingsPromise = loading;
+    loading.catch(() => {
+        if (bindingsPromise !== loading) return;
+        bindingsPromise = undefined;
+        loadedAssets = undefined;
+    });
+    return loading;
 }
 
 function requireSession(conversationId: number): Session {
@@ -85,7 +148,12 @@ function execute(client: WasmMlsClient, command: MlsWorkerCommand): MlsWorkerCom
         case 'stageAddMember': {
             const output = client.stageAddMember(command.keyPackage);
             try {
-                return { kind: 'memberAddStaged', commit: copy(output.commit), welcome: copy(output.welcome) };
+                return {
+                    kind: 'memberAddStaged',
+                    claimedIdentity: copy(output.claimedIdentity),
+                    commit: copy(output.commit),
+                    welcome: copy(output.welcome),
+                };
             } finally {
                 output.free();
             }
@@ -106,20 +174,19 @@ function execute(client: WasmMlsClient, command: MlsWorkerCommand): MlsWorkerCom
         case 'createSelfUpdate':
             return { kind: 'selfUpdateCreated', commit: copy(client.createSelfUpdate()) };
         case 'processIncomingCommit': {
-            const outcome = client.processIncomingCommit(
-                command.message,
-                Uint32Array.from(command.authorizedCommitters),
-            );
+            const facts = client.processIncomingCommit(command.message);
             try {
                 return {
                     kind: 'commitProcessed',
-                    senderMemberNumber: outcome.senderMemberNumber,
-                    epoch: outcome.epoch.toString(),
-                    added: Array.from(outcome.added),
-                    removed: Array.from(outcome.removed),
+                    senderIdentity: copy(facts.senderIdentity),
+                    senderIsMember: facts.senderIsMember,
+                    added: copy(facts.added),
+                    addedLengths: Uint32Array.from(facts.addedLengths),
+                    removedLeaves: Array.from(facts.removedLeaves),
+                    epoch: facts.epoch.toString(),
                 };
             } finally {
-                outcome.free();
+                facts.free();
             }
         }
         case 'processApplicationMessage': {
@@ -127,7 +194,8 @@ function execute(client: WasmMlsClient, command: MlsWorkerCommand): MlsWorkerCom
             try {
                 return {
                     kind: 'applicationMessageProcessed',
-                    senderMemberNumber: output.senderMemberNumber,
+                    senderIdentity: copy(output.senderIdentity),
+                    senderIsMember: output.senderIsMember,
                     payload: copy(output.payload),
                 };
             } finally {
@@ -147,11 +215,13 @@ function success(requestId: number, response: MlsWorkerSuccessPayload): void {
 }
 
 function failure(requestId: number, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
     scope.postMessage({
         protocolVersion: MLS_WORKER_PROTOCOL_VERSION,
         requestId,
         ok: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
+        code: classifyMlsError(message),
     });
 }
 
@@ -168,41 +238,43 @@ async function handle(request: MlsWorkerRequest): Promise<void> {
             }
             const client =
                 request.checkpoint === undefined
-                    ? new bindings.EphemonMlsClient(request.memberNumber)
-                    : bindings.EphemonMlsClient.importCheckpoint(request.checkpoint);
-            if (client.memberNumber !== request.memberNumber) {
+                    ? new bindings.EphemonMlsClient(request.identity)
+                    : restoreClient(bindings, request.checkpoint);
+            if (!sameBytes(client.identity, request.identity)) {
                 client.free();
-                throw new Error('MLS checkpoint member number does not match the conversation roster');
+                throw new Error('MLS checkpoint identity does not match the conversation');
             }
             existing?.client.free();
             existing?.pending?.before.fill(0);
             sessions.set(request.conversationId, { client });
-            success(request.requestId, { kind: 'loaded', memberNumber: client.memberNumber });
+            success(request.requestId, { kind: 'loaded', identity: copy(client.identity) });
             return;
         }
         case 'execute': {
-            const bindings = await loadBindings(loadedAssets ?? DEFAULT_MLS_WASM_ASSET_URLS);
             const session = requireSession(request.conversationId);
             ensureNoPending(session);
-            const before = copy(session.client.exportCheckpoint());
+            const before = snapshot(session.client);
             let result: MlsWorkerCommandResult;
             try {
                 result = execute(session.client, request.command);
             } catch (error) {
-                const restored = bindings.EphemonMlsClient.importCheckpoint(before);
-                session.client.free();
-                session.client = restored;
-                before.fill(0);
+                await revert(session, before);
                 throw error;
             }
             const operationId = nextOperationId++;
             session.pending = { id: operationId, before };
-            success(request.requestId, {
-                kind: 'executed',
-                operationId,
-                checkpoint: copy(session.client.exportCheckpoint()),
-                result,
-            });
+            try {
+                success(request.requestId, {
+                    kind: 'executed',
+                    operationId,
+                    checkpoint: snapshot(session.client),
+                    result,
+                });
+            } catch (error) {
+                session.pending = undefined;
+                await revert(session, before);
+                throw error;
+            }
             return;
         }
         case 'accept': {
@@ -214,35 +286,56 @@ async function handle(request: MlsWorkerRequest): Promise<void> {
             return;
         }
         case 'rollback': {
-            const bindings = await loadBindings(loadedAssets ?? DEFAULT_MLS_WASM_ASSET_URLS);
             const session = requireSession(request.conversationId);
             if (session.pending?.id !== request.operationId) throw new Error('MLS operation rollback does not match');
             const before = session.pending.before;
-            const restored = bindings.EphemonMlsClient.importCheckpoint(before);
-            session.client.free();
-            session.client = restored;
-            before.fill(0);
             session.pending = undefined;
+            await revert(session, before);
             success(request.requestId, { kind: 'rolledBack', operationId: request.operationId });
+            return;
+        }
+        case 'unload': {
+            const session = sessions.get(request.conversationId);
+            session?.pending?.before.fill(0);
+            session?.client.free();
+            sessions.delete(request.conversationId);
+            success(request.requestId, { kind: 'unloaded' });
+            return;
+        }
+        case 'sign': {
+            const session = requireSession(request.conversationId);
+            ensureNoPending(session);
+            success(request.requestId, { kind: 'signed', signature: copy(session.client.sign(request.message)) });
+            return;
+        }
+        case 'verify': {
+            const session = requireSession(request.conversationId);
+            ensureNoPending(session);
+            success(request.requestId, {
+                kind: 'verified',
+                valid: session.client.verify(request.signaturePublicKey, request.message, request.signature),
+            });
             return;
         }
         case 'inspect': {
             const session = requireSession(request.conversationId);
             ensureNoPending(session);
-            let epoch: string | undefined;
-            let memberNumbers: Uint32Array | undefined;
-            let epochAuthenticator: Uint8Array | undefined;
+            let epoch: string;
             try {
                 epoch = session.client.epoch().toString();
-                memberNumbers = Uint32Array.from(session.client.memberNumbers());
-                epochAuthenticator = copy(session.client.epochAuthenticator());
-            } catch {}
+            } catch {
+                success(request.requestId, { kind: 'inspected', identity: copy(session.client.identity) });
+                return;
+            }
             success(request.requestId, {
                 kind: 'inspected',
-                memberNumber: session.client.memberNumber,
+                identity: copy(session.client.identity),
                 epoch,
-                memberNumbers,
-                epochAuthenticator,
+                memberIdentities: copy(session.client.memberIdentities()),
+                memberIdentityLengths: Uint32Array.from(session.client.memberIdentityLengths()),
+                memberSignatureKeys: copy(session.client.memberSignatureKeys()),
+                memberSignatureKeyLengths: Uint32Array.from(session.client.memberSignatureKeyLengths()),
+                epochAuthenticator: copy(session.client.epochAuthenticator()),
             });
         }
     }
