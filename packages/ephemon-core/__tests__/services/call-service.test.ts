@@ -357,18 +357,32 @@ describe('CallService', () => {
     describe('close', () => {
         it('should use sendBeacon for close requests', () => {
             mockNavigator.sendBeacon = vi.fn();
-            global.Blob = vi.fn().mockImplementation(function () {
-                return {};
-            }) as any;
-            global.JSON.stringify = vi.fn().mockReturnValue('{"test":"data"}');
+            const beaconPayload = {};
+            const mockBlob = vi.fn(function () {
+                return beaconPayload;
+            });
+            vi.stubGlobal('Blob', mockBlob);
 
-            callService.close(publicKey, peerPublicKey);
+            try {
+                callService.close(publicKey, peerPublicKey);
+            } finally {
+                vi.unstubAllGlobals();
+            }
 
             expect(mockNavigator.sendBeacon).toHaveBeenCalledWith(
                 'https://test-server.com/api/v1/call',
-                expect.any(Object),
+                beaconPayload,
             );
-            expect(global.Blob).toHaveBeenCalledWith(['{"test":"data"}'], { type: 'application/json' });
+            const expectedRequest = {
+                a: 'close',
+                b: {
+                    a: publicKey,
+                    b: mockTimeService.serverTime,
+                    c: peerPublicKey,
+                },
+                c: 'encoded-data',
+            };
+            expect(mockBlob).toHaveBeenCalledWith([JSON.stringify(expectedRequest)], { type: 'application/json' });
         });
     });
 });
